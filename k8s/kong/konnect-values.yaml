@@ -1,0 +1,96 @@
+# Kong Gateway Helm Values for Kong Konnect Integration
+# @author Shanaka Jayasundera - shanakaj@gmail.com
+#
+# This values file configures Kong Gateway to connect to Kong Konnect
+# for centralized management, analytics, and developer portal.
+#
+# IMPORTANT: Update the placeholders below with your Konnect credentials:
+# - <your-cp>: Your control plane ID from Konnect dashboard
+
+# Enable Gateway API support
+gateway:
+  enabled: true
+
+  # Konnect connection settings
+  env:
+    # Control Plane connection
+    cluster_control_plane: "<your-cp>.us.cp0.konghq.com:443"
+    cluster_server_name: "<your-cp>.us.cp0.konghq.com"
+
+    # Telemetry endpoint for analytics
+    cluster_telemetry_endpoint: "<your-cp>.us.tp0.konghq.com:443"
+    cluster_telemetry_server_name: "<your-cp>.us.tp0.konghq.com"
+
+    # Certificate paths (mounted from secrets)
+    cluster_cert: /etc/secrets/konnect-client-tls/tls.crt
+    cluster_cert_key: /etc/secrets/konnect-client-tls/tls.key
+    lua_ssl_trusted_certificate: /etc/secrets/konnect-cluster-cert/ca.crt
+
+  # Mount Konnect secrets
+  secretVolumes:
+    - konnect-client-tls
+    - konnect-cluster-cert
+
+# Kong Ingress Controller
+ingressController:
+  enabled: true
+  installCRDs: true
+
+  # Enable Gateway API support
+  env:
+    feature_gates: "GatewayAlpha=true"
+
+# Kong Gateway (Data Plane) configuration
+proxy:
+  enabled: true
+  type: LoadBalancer
+
+  # AWS NLB annotations for internal load balancer
+  annotations:
+    service.beta.kubernetes.io/aws-load-balancer-type: "nlb"
+    service.beta.kubernetes.io/aws-load-balancer-scheme: "internal"
+    service.beta.kubernetes.io/aws-load-balancer-nlb-target-type: "ip"
+    service.beta.kubernetes.io/aws-load-balancer-healthcheck-path: "/healthz/ready"
+    service.beta.kubernetes.io/aws-load-balancer-healthcheck-protocol: "HTTP"
+
+  http:
+    enabled: true
+    containerPort: 8000
+    servicePort: 80
+
+  tls:
+    enabled: false
+
+# Admin API (disabled - managed via Konnect)
+admin:
+  enabled: false
+
+# Status endpoint for health checks
+status:
+  enabled: true
+  http:
+    enabled: true
+    containerPort: 8100
+
+# Resource limits
+resources:
+  requests:
+    cpu: 100m
+    memory: 256Mi
+  limits:
+    cpu: 500m
+    memory: 512Mi
+
+# Tolerations for system node pool
+tolerations:
+  - key: "CriticalAddonsOnly"
+    operator: "Exists"
+    effect: "NoSchedule"
+
+# Pod disruption budget for HA
+podDisruptionBudget:
+  enabled: true
+  minAvailable: 1
+
+# Replica count
+replicaCount: 2

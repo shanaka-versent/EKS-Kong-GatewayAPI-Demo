@@ -1,8 +1,12 @@
-# ArgoCD App: Kong Gateway
+# ArgoCD App: Kong Gateway with Konnect Integration
 # @author Shanaka Jayasundera - shanakaj@gmail.com
 #
 # LAYER 3: K8s Customizations
 # Sync Wave: 1 (after Gateway API CRDs)
+#
+# NOTE: Before deploying, run scripts/setup-konnect.sh to create the
+# required Kubernetes secrets for Konnect connection.
+# Update the <your-cp> placeholders with your Control Plane ID from Konnect.
 
 apiVersion: argoproj.io/v1alpha1
 kind: Application
@@ -34,6 +38,24 @@ spec:
           env:
             feature_gates: "GatewayAlpha=true"
 
+        # Kong Gateway environment variables for Konnect
+        env:
+          # Control Plane connection (UPDATE THESE)
+          cluster_control_plane: "<your-cp>.us.cp0.konghq.com:443"
+          cluster_server_name: "<your-cp>.us.cp0.konghq.com"
+          # Telemetry endpoint for analytics
+          cluster_telemetry_endpoint: "<your-cp>.us.tp0.konghq.com:443"
+          cluster_telemetry_server_name: "<your-cp>.us.tp0.konghq.com"
+          # Certificate paths (mounted from secrets)
+          cluster_cert: /etc/secrets/konnect-client-tls/tls.crt
+          cluster_cert_key: /etc/secrets/konnect-client-tls/tls.key
+          lua_ssl_trusted_certificate: /etc/secrets/konnect-cluster-cert/ca.crt
+
+        # Mount Konnect certificate secrets
+        secretVolumes:
+          - konnect-client-tls
+          - konnect-cluster-cert
+
         # Kong Gateway (Data Plane)
         proxy:
           enabled: true
@@ -43,6 +65,7 @@ spec:
             service.beta.kubernetes.io/aws-load-balancer-scheme: "internal"
             service.beta.kubernetes.io/aws-load-balancer-nlb-target-type: "ip"
             service.beta.kubernetes.io/aws-load-balancer-healthcheck-path: "/healthz/ready"
+            service.beta.kubernetes.io/aws-load-balancer-healthcheck-protocol: "HTTP"
           http:
             enabled: true
             containerPort: 8000
@@ -50,7 +73,7 @@ spec:
           tls:
             enabled: false
 
-        # Admin API (disabled)
+        # Admin API (disabled - managed via Konnect)
         admin:
           enabled: false
 
@@ -59,6 +82,7 @@ spec:
           enabled: true
           http:
             enabled: true
+            containerPort: 8100
 
         # Resources
         resources:
@@ -74,6 +98,11 @@ spec:
           - key: "CriticalAddonsOnly"
             operator: "Exists"
             effect: "NoSchedule"
+
+        # Pod disruption budget for HA
+        podDisruptionBudget:
+          enabled: true
+          minAvailable: 1
 
         # Replicas
         replicaCount: 2
