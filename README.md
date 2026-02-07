@@ -1045,11 +1045,41 @@ If you don't have a Kong Konnect subscription and don't need Enterprise features
 
 ---
 
-## Appendix: Kong Gateway as API Management with Istio Gateway
+## Appendix: Kong as an External API Management Layer (Replacing AWS API Gateway)
 
-If you're already using **Istio Gateway** as your K8s Gateway API implementation and want to replace **AWS API Gateway** (or Azure APIM) with Kong for API management, this is fully supported. Kong Gateway can sit as the API management layer in front of Istio, replacing the cloud-managed API gateway while keeping Istio for routing and service mesh.
+In the [Istio POC architecture](https://github.com/shanaka-versent/EKS-Istio-GatewayAPI-Deom/tree/k8s-gateway-api-poc), **AWS API Gateway** sits **outside** the EKS cluster as a separate API management layer — it is not deployed inside K8s. Can Kong do the same? **Yes.** Kong Konnect provides **Dedicated Cloud Gateways** — fully managed Kong data plane instances hosted outside your cluster, positioned identically to where AWS API Gateway sits.
 
-### Architecture: Istio Gateway + Kong API Management
+### How AWS API Gateway Sits Today (Istio POC)
+
+```mermaid
+%%{init: {'theme': 'neutral'}}%%
+flowchart TB
+    Client["Client"]
+
+    subgraph AWSManaged["AWS Managed Services"]
+        CloudFront["CloudFront + WAF"]
+        APIGW["AWS API Gateway<br/>(API Management)<br/>Auth · Rate Limiting · Usage Plans"]
+    end
+
+    subgraph VPC["VPC — Private Subnets"]
+        VPCLink["VPC Link"]
+        NLB["Internal NLB"]
+
+        subgraph EKS["EKS Cluster"]
+            IstioGW["Istio Gateway<br/>(K8s Gateway API)"]
+            Apps["Backend Services"]
+        end
+    end
+
+    Client --> CloudFront
+    CloudFront --> APIGW
+    APIGW --> VPCLink
+    VPCLink --> NLB
+    NLB --> IstioGW
+    IstioGW --> Apps
+```
+
+### Kong Replacing AWS API Gateway (Same External Position)
 
 ```mermaid
 %%{init: {'theme': 'neutral'}}%%
@@ -1057,118 +1087,122 @@ flowchart TB
     Client["Client (HTTPS)"]
 
     subgraph Edge["CloudFront + AWS WAF"]
-        direction LR
-        WAF["AWS WAF<br/>OWASP Top 10 · IP Reputation<br/>Geo Blocking · Rate Limiting"]
+        WAF["AWS WAF<br/>OWASP Top 10 · Bot Detection<br/>Geo Blocking · IP Reputation"]
         CDN["CloudFront<br/>TLS Termination (ACM)"]
     end
 
-    VPCOrigin["VPC Origin<br/>(AWS PrivateLink)"]
+    subgraph KongManaged["Kong Konnect — Dedicated Cloud Gateway"]
+        KongGW["Kong Gateway Data Plane<br/>(Fully Managed by Kong)<br/>Hosted Outside Your Cluster"]
+        Plugins["Kong Plugins<br/>Auth (JWT/OAuth/OIDC) · Rate Limiting<br/>Request Transforms · CORS · ACL"]
+    end
 
-    subgraph VPC["VPC — Private Subnets Only"]
+    subgraph KonnectSaaS["Kong Konnect — Management Plane"]
+        direction LR
+        Analytics["Analytics &<br/>Monitoring"]
+        Portal["Developer<br/>Portal"]
+        Config["Centralized<br/>Config"]
+    end
+
+    subgraph VPC["VPC — Private Subnets"]
         NLB["Internal NLB<br/>(No Public IP)"]
 
         subgraph EKS["EKS Cluster"]
-
-            subgraph KongNS["kong namespace"]
-                KongGW["Kong Gateway :443<br/>(API Management Only)<br/>TLS Termination"]
-                Plugins["Kong Plugins<br/>Auth · Rate Limit · Transforms"]
-            end
-
-            subgraph IstioNS["istio-ingress namespace"]
-                IstioGW["Istio Gateway<br/>(K8s Gateway API)"]
-            end
-
-            subgraph Apps["Application Namespaces"]
-                HR["HTTPRoutes"]
-                SVC["Backend Services"]
-            end
+            IstioGW["Istio Gateway<br/>(K8s Gateway API)"]
+            HR["HTTPRoutes"]
+            Apps["Backend Services"]
         end
     end
 
-    subgraph Konnect["Kong Konnect SaaS"]
-        direction LR
-        Analytics["Analytics"]
-        Portal["Dev Portal"]
-    end
-
-    Client -->|"TLS 1 (ACM Cert)"| CDN
+    Client -->|"HTTPS"| CDN
     CDN --> WAF
-    WAF -->|"Private"| VPCOrigin
-    VPCOrigin -->|"Private"| NLB
-    NLB -->|"TLS 2 (Kong Cert)"| KongGW
+    WAF --> KongGW
     KongGW --> Plugins
-    Plugins --> IstioGW
+    Plugins -->|"Private Connectivity<br/>(PrivateLink / VPC Peering)"| NLB
+    NLB --> IstioGW
     IstioGW --> HR
-    HR --> SVC
-    KongGW -.-> Konnect
+    HR --> Apps
+    KongGW -.->|"Control Plane<br/>Connection"| KonnectSaaS
 ```
 
-### Private Connectivity & Security Layers
+### Where Does Each Layer Sit?
 
-The architecture uses the same private connectivity pattern as this repo's main architecture — **no public endpoints** are exposed inside the VPC:
+| Layer | AWS API Gateway (Current) | Kong Replacement | Location |
+|-------|---------------------------|------------------|----------|
+| **CDN + WAF** | CloudFront + AWS WAF | CloudFront + AWS WAF (unchanged) | AWS Edge |
+| **API Management** | AWS API Gateway (managed service) | **Kong Konnect Dedicated Cloud Gateway** (managed by Kong) | **Outside the cluster** — hosted in Kong's infrastructure |
+| **Management Plane** | AWS Console / CloudWatch | **Kong Konnect SaaS** — analytics, dev portal, centralized config | Kong's SaaS at `cloud.konghq.com` |
+| **Private Connectivity** | VPC Link (API GW → NLB) | **AWS PrivateLink / VPC Peering** (Kong Cloud GW → NLB) | AWS backbone (private) |
+| **K8s Gateway API** | Istio Gateway | Istio Gateway (unchanged) | Inside the EKS cluster |
+| **Service Mesh** | Istio Ambient (optional) | Istio Ambient (unchanged) | Inside the EKS cluster |
 
-| Layer | Component | Security Role |
-|-------|-----------|---------------|
-| **WAF** | AWS WAF (at CloudFront) | OWASP Top 10 protection, IP reputation filtering, geo-blocking, L7 rate limiting, bot detection. Applied **before** traffic enters the VPC |
-| **TLS Session 1** | CloudFront (ACM certificate) | Client-facing TLS termination. Public certificate from AWS Certificate Manager |
-| **Private Link** | CloudFront VPC Origin (PrivateLink) | CloudFront connects to Internal NLB over AWS backbone — traffic **never traverses the public internet** |
-| **Internal NLB** | Network Load Balancer (private subnets) | No public IP. Security group restricts ingress to CloudFront prefix list only (`com.amazonaws.global.cloudfront.origin-facing`) |
-| **TLS Session 2** | Kong Gateway (port 443) | Re-encrypts traffic from NLB to Kong. Self-signed or private CA certificate (`kong-gateway-tls` secret) |
-| **API Management** | Kong Plugins | Authentication (JWT, OAuth, OIDC), per-route rate limiting, request transforms, CORS — applied **inside the cluster** after WAF |
-| **K8s Routing** | Istio Gateway + HTTPRoutes | Gateway API routing to backend services. Istio handles GatewayClass/Gateway/HTTPRoute |
-| **Service Mesh** | Istio Ambient (optional) | East-west mTLS between services — independent of north-south path |
-| **Management Plane** | Kong Konnect (SaaS) | Analytics, developer portal, plugin management — connected outbound from Kong, not in the traffic path |
+### Deployment Options for Kong Outside the Cluster
 
-### WAF + Kong: Complementary, Not Redundant
+There are **two ways** to deploy Kong as an external API management layer — just like AWS API Gateway sits outside the cluster:
 
-AWS WAF and Kong plugins operate at **different layers** and serve **different purposes**:
+| Option | Description | Managed By | Best For |
+|--------|-------------|------------|----------|
+| **Kong Konnect Dedicated Cloud Gateways** | Fully managed Kong data plane instances hosted on Kong's infrastructure. Kong provisions, scales, and maintains the gateway. You configure routes and plugins via Konnect UI/API | **Kong** (fully managed) | Teams that want a managed service experience identical to AWS API Gateway — no infrastructure to operate |
+| **Self-Hosted Kong on Separate Compute** | Deploy Kong Gateway on EC2 instances, ECS Fargate, or a separate K8s cluster dedicated to API management. You manage the infrastructure, Kong Konnect manages the config | **You** (infrastructure) + **Kong Konnect** (config) | Teams that need full control over the data plane infrastructure, custom networking, or compliance requirements |
 
-| Concern | AWS WAF (Edge) | Kong Plugins (In-Cluster) |
-|---------|----------------|---------------------------|
-| **When applied** | Before traffic enters VPC | After traffic reaches the cluster |
-| **OWASP protection** | ✅ SQL injection, XSS, etc. | ❌ Not its job |
-| **Bot detection** | ✅ AWS Bot Control | ❌ |
-| **Geo-blocking** | ✅ Country-level | ❌ |
-| **IP reputation** | ✅ AWS Managed Rules | ❌ |
-| **API authentication** | ❌ | ✅ JWT, OAuth, OIDC, API keys |
-| **Per-route rate limiting** | Basic (IP-based) | ✅ Per-consumer, per-route |
-| **Request transforms** | ❌ | ✅ Add headers, rewrite paths |
-| **API-specific policies** | ❌ | ✅ Per-API plugin configuration |
+> **Kong Konnect Dedicated Cloud Gateways** is the direct analog to AWS API Gateway — a fully managed API management layer that sits outside your application cluster. You don't deploy or operate the gateway; Kong does.
 
-> **WAF stops malicious traffic at the edge before it consumes cluster resources. Kong handles API-specific policies that require application context (who is the consumer, which API, what plan).**
+### Private Connectivity: Kong Cloud Gateway → Your Cluster
 
-### What Changes vs AWS API Gateway?
+Just as AWS API Gateway uses **VPC Links** to privately reach your Internal NLB, Kong Konnect Dedicated Cloud Gateways use **AWS PrivateLink** or **VPC Peering** for private connectivity:
 
-| Aspect | AWS API Gateway | Kong Gateway |
-|--------|-----------------|--------------|
-| **Deployment** | AWS-managed service (outside K8s) | Deployed inside K8s (same cluster as Istio) |
-| **Connectivity to NLB** | VPC Link (managed by AWS) | Same VPC — NLB targets Kong pods directly |
-| **Private integration** | API GW → VPC Link → NLB | CloudFront → VPC Origin → NLB → Kong |
-| **WAF** | Can attach WAF to API GW or CloudFront | WAF stays at CloudFront (Kong is internal) |
-| **Auth** | Lambda Authorizers | Built-in plugins (JWT, OAuth, OIDC, API keys) |
-| **Rate Limiting** | Usage Plans | KongPlugin (per-route, per-consumer) |
-| **Developer Portal** | Not built-in | Kong Konnect Dev Portal |
-| **Analytics** | CloudWatch | Kong Konnect Analytics |
-| **Cost Model** | Per-request pricing ($3.50/million) | Kong license + compute |
-| **Vendor Lock-in** | AWS-specific | Cloud-agnostic (runs anywhere K8s runs) |
+| Aspect | AWS API Gateway | Kong Dedicated Cloud Gateway |
+|--------|-----------------|------------------------------|
+| **Private connection method** | VPC Link (managed by AWS) | AWS PrivateLink or VPC Peering |
+| **Traffic path** | API GW → VPC Link → Internal NLB | Kong Cloud GW → PrivateLink → Internal NLB |
+| **Public internet exposure** | No (VPC Link is private) | No (PrivateLink is private) |
+| **NLB requirement** | Yes, Internal NLB in private subnets | Yes, Internal NLB in private subnets |
+| **Security group** | Allow API GW VPC Link CIDR | Allow Kong PrivateLink endpoint |
 
-### Which Kong Products Are Involved?
+### WAF Placement
 
-| Product | Required? | Role |
-|---------|-----------|------|
-| **Kong Gateway** (Data Plane) | Yes | Deployed in K8s as a reverse proxy for API management. Runs the plugin chain (rate limiting, auth, transforms) before forwarding to Istio Gateway |
-| **Kong Ingress Controller** | Optional | Not needed for Gateway API routing (Istio handles that). Only needed if you want Kong to also manage its own routes via K8s CRDs |
-| **Kong Konnect** (SaaS) | Recommended | Provides centralized analytics, developer portal, and management UI. Without it, Kong Gateway still works but you lose the SaaS management features |
-| **Kong Gateway Enterprise** | Recommended | Required for enterprise plugins (OIDC, OPA, Vault integration). OSS edition works for basic plugins (rate limiting, JWT, CORS) |
+| Pattern | WAF Location | Why |
+|---------|-------------|-----|
+| **CloudFront + AWS API Gateway** | WAF attached to CloudFront **or** API Gateway (or both) | AWS API GW natively supports WAF attachment |
+| **CloudFront + Kong Cloud Gateway** | WAF attached to **CloudFront only** | Kong Cloud Gateway is external — WAF at CloudFront filters traffic before it reaches Kong. Kong plugins handle API-specific concerns (auth, rate limiting) downstream |
+
+AWS WAF and Kong plugins remain **complementary**:
+- **WAF at CloudFront**: OWASP Top 10, bot detection, geo-blocking, IP reputation — stops malicious traffic at the edge
+- **Kong Plugins**: JWT/OAuth/OIDC authentication, per-consumer rate limiting, request transforms — handles API-specific policies requiring application context
+
+### What Kong Products Are Involved?
+
+| Product | Role | Required? |
+|---------|------|-----------|
+| **Kong Konnect** (SaaS Platform) | Management plane — centralized analytics, developer portal, plugin configuration, multi-cluster management | Yes |
+| **Dedicated Cloud Gateways** (part of Konnect) | Fully managed Kong data plane instances sitting outside your cluster — direct replacement for AWS API Gateway | Yes (for the managed option) |
+| **Kong Gateway Enterprise** | The data plane runtime that processes requests and runs plugins. In the managed option, Kong operates this for you | Included in Dedicated Cloud Gateways |
+| **Kong Ingress Controller** | NOT needed — Istio handles K8s Gateway API routing inside the cluster. Kong sits outside | No |
+
+### Side-by-Side: AWS API Gateway vs Kong Konnect
+
+| Aspect | AWS API Gateway | Kong Konnect Dedicated Cloud Gateway |
+|--------|-----------------|--------------------------------------|
+| **Deployment model** | AWS-managed service | Kong-managed service |
+| **Location** | Outside K8s (AWS infrastructure) | Outside K8s (Kong infrastructure) |
+| **Configuration** | AWS Console / CloudFormation / CDK | Kong Konnect UI / decK CLI / Konnect API |
+| **Authentication** | Lambda Authorizers (custom code) | Built-in plugins (JWT, OAuth, OIDC, API keys) — no custom code |
+| **Rate limiting** | Usage Plans (per API key) | KongPlugin (per-route, per-consumer, sliding window) |
+| **Request transforms** | Mapping Templates (VTL) | Request Transformer plugin (declarative) |
+| **Developer portal** | Not built-in | Built-in Kong Dev Portal |
+| **Analytics** | CloudWatch | Kong Konnect Analytics + Prometheus export |
+| **Multi-cloud** | AWS only | Same config works on AWS, Azure, GCP |
+| **Cost model** | Per-request ($3.50/million) + data transfer | Kong Konnect subscription |
+| **Vendor lock-in** | AWS-specific APIs and config | Cloud-agnostic — portable config via decK |
 
 ### When to Use This Pattern
 
-- You're **already running Istio** for service mesh (mTLS between services) and want to add API management
-- You want to **replace AWS API Gateway / Azure APIM** with a cloud-agnostic, in-cluster solution
-- You need a **developer portal** and **centralized analytics** for your APIs
-- You want **consistent API management** across multi-cloud (same Kong config works on AWS, Azure, GCP)
+- You want to **replace AWS API Gateway** with a cloud-agnostic managed API gateway that sits in the **same architectural position** (outside the cluster)
+- You need a **developer portal** and **centralized API analytics** that AWS API Gateway doesn't provide natively
+- You want **consistent API management across multi-cloud** — the same Kong config works whether your clusters are on AWS, Azure, or GCP
+- You want **built-in authentication plugins** (JWT, OAuth, OIDC) instead of writing Lambda Authorizers
+- You're already using **Istio for K8s Gateway API routing** and service mesh — and only need an external API management layer
 
-> **Note:** In this pattern, Kong Gateway does NOT implement the K8s Gateway API — Istio does. Kong acts purely as an API management reverse proxy sitting in front of Istio Gateway. This is different from this repo's main architecture where Kong is BOTH the Gateway API implementation and the API management layer.
+> **Key Insight:** In this pattern, nothing changes inside the EKS cluster. Istio Gateway, HTTPRoutes, and backend services remain exactly as they are. You're only replacing the **external API management layer** — swapping AWS API Gateway for Kong Konnect Dedicated Cloud Gateways. The cluster doesn't know or care what sits in front of its Internal NLB.
 
 ---
 
