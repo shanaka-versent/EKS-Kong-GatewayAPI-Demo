@@ -494,7 +494,7 @@ flowchart LR
 - Terraform >= 1.5
 - kubectl
 - Helm 3.x
-- Kong Konnect account (for management features)
+- **Optional:** Kong Konnect account (for centralized management, analytics, and Developer Portal)
 
 ## Deployment Steps
 
@@ -526,135 +526,51 @@ terraform apply -var="enable_cloudfront=true"
 $(terraform output -raw eks_get_credentials_command)
 ```
 
-### Step 4: Configure Kong Konnect Integration
+### Step 4: Understanding Kong as a Gateway API Implementation
 
-Kong Konnect is Kong's unified API platform that provides a cloud-hosted control plane while allowing you to run data planes in your own infrastructure. This hybrid architecture gives you centralized management with data sovereignty.
+Kong Gateway implements the Kubernetes Gateway API **exactly like Istio does**. The architecture is directly comparable:
 
-#### Understanding the Konnect Architecture
+| Component | Istio | Kong |
+|-----------|-------|------|
+| **Controller** (watches Gateway API resources) | Istiod | Kong Ingress Controller (KIC) |
+| **Data Plane** (processes traffic) | Envoy Proxy | Kong Gateway |
+| **GatewayClass controllerName** | `gateway.istio.io/gateway-controller` | `konghq.com/kic-gateway-controller` |
 
 ```mermaid
-flowchart TB
-    subgraph Konnect["Kong Konnect (Cloud-Hosted)"]
-        CP["Control Plane"]
-        Analytics["Observability & Analytics"]
-        Portal["Developer Portal"]
-        Catalog["Service Catalog"]
-        Identity["Kong Identity"]
+flowchart LR
+    subgraph "Kong Gateway API Implementation"
+        KIC["Kong Ingress Controller\n(watches Gateway API CRDs)"]
+        KG["Kong Gateway Pods\n(data plane - processes traffic)"]
     end
-
-    subgraph YourInfra["Your Infrastructure (EKS)"]
-        DP1["Data Plane Node 1"]
-        DP2["Data Plane Node 2"]
-        DP3["Data Plane Node N"]
-    end
-
-    CP -->|"Configuration Push (TLS/mTLS)"| DP1
-    CP -->|"Configuration Push"| DP2
-    CP -->|"Configuration Push"| DP3
-    DP1 -->|"Telemetry Data"| Analytics
-    DP2 -->|"Telemetry Data"| Analytics
-    DP3 -->|"Telemetry Data"| Analytics
+    
+    GC["GatewayClass\n(kong)"]
+    GW["Gateway\n(kong-gateway)"]
+    HR["HTTPRoute\n(/app1, /app2, /api/*)"]
+    SVC["Backend Services"]
+    
+    GC --> KIC
+    GW --> KIC
+    HR --> KIC
+    KIC -->|"configures"| KG
+    KG -->|"routes to"| SVC
 ```
 
-#### Konnect Control Plane Setup
+This project deploys:
+- **GatewayClass** (`k8s/kong/gateway-class.yaml`): Registers Kong as the Gateway API implementation
+- **Gateway** (`k8s/kong/gateway.yaml`): Creates the Kong Gateway instance
+- **HTTPRoute** resources: Define routing rules (just like Istio VirtualService)
 
-1. **Log in to Kong Konnect**
-   - Go to [cloud.konghq.com](https://cloud.konghq.com)
-   - Select your geographic region (US, EU, AU, ME, IN, or SG)
+### Step 5: (Optional) Configure Kong Konnect Integration
 
-2. **Create a Control Plane**
-   
-   There are two approaches for Kubernetes Gateway API with Konnect:
+Kong Konnect is **optional**. The Gateway API works without it. Konnect adds:
+- Centralized analytics and observability
+- Developer Portal for API documentation
+- Multi-cluster management
+- AI Gateway features
 
-   **Option A: Kong Gateway Operator (Recommended)**
-   
-   The Kong Gateway Operator provides a fully declarative, Kubernetes-native approach. When you create a `Gateway` resource, the Operator automatically provisions Kong Gateway data planes.
-   
-   ```bash
-   # Install Kong Gateway Operator with Konnect support
-   helm repo add kong https://charts.konghq.com
-   helm repo update
-   
-   helm upgrade --install kong-operator kong/kong-operator -n kong-system \
-     --create-namespace \
-     --set env.ENABLE_CONTROLLER_KONNECT=true
-   
-   # Create Konnect API credentials secret
-   kubectl create namespace kong
-   kubectl create secret generic konnect-api-auth -n kong \
-     --from-literal=token='your-konnect-pat-token'
-   
-   # Create control plane via CRD (automatically creates in Konnect)
-   cat <<EOF | kubectl apply -f -
-   apiVersion: konnect.konghq.com/v1alpha1
-   kind: KonnectGatewayControlPlane
-   metadata:
-     name: gateway-control-plane
-     namespace: kong
-   spec:
-     createControlPlaneRequest:
-       name: eks-kong-gateway
-     konnect:
-       authRef:
-         name: konnect-api-auth
-   EOF
-   ```
-   
-   Then create your Gateway API resources:
-   ```yaml
-   apiVersion: gateway.networking.k8s.io/v1
-   kind: GatewayClass
-   metadata:
-     name: kong
-   spec:
-     controllerName: konghq.com/gateway-operator
-   ---
-   apiVersion: gateway.networking.k8s.io/v1
-   kind: Gateway
-   metadata:
-     name: kong
-     namespace: kong
-   spec:
-     gatewayClassName: kong
-     listeners:
-       - name: http
-         port: 80
-         protocol: HTTP
-   ```
+**Skip this step if you don't need Konnect integration.**
 
-   **Option B: Direct Helm Installation**
-   
-   For more control over the deployment, use Helm directly:
-   
-   - In the Konnect UI left sidebar, click **API Gateway**
-   - Click **+ New Control Plane**
-   - Select **Kong Ingress Controller** (this is for Kubernetes Gateway API deployments)
-   
-   Or using the API:
-   ```bash
-   # Set your Konnect Personal Access Token
-   export KONNECT_TOKEN='your-pat-token'
-   export KONNECT_REGION='us'  # Options: us, eu, au, me, in, sg
-
-   # Create a Control Plane for Kubernetes Gateway API deployments
-   CONTROL_PLANE_DETAILS=$(curl -X POST "https://${KONNECT_REGION}.api.konghq.com/v2/control-planes" \
-     -H "Authorization: Bearer $KONNECT_TOKEN" \
-     --json '{
-       "name": "eks-kong-gateway",
-       "cluster_type": "CLUSTER_TYPE_K8S_INGRESS_CONTROLLER"
-     }')
-
-   # Extract endpoints
-   CONTROL_PLANE_ID=$(echo $CONTROL_PLANE_DETAILS | jq -r .id)
-   CONTROL_PLANE_ENDPOINT=$(echo $CONTROL_PLANE_DETAILS | jq -r '.config.control_plane_endpoint | sub("https://";"")')
-   TELEMETRY_ENDPOINT=$(echo $CONTROL_PLANE_DETAILS | jq -r '.config.telemetry_endpoint | sub("https://";"")')
-   ```
-
-   > **Understanding the Architecture:** Both options use Kong Gateway with Gateway API support. The "Kong Ingress Controller" control plane type in Konnect refers to the Kubernetes controller component that translates Gateway API resources (Gateway, HTTPRoute, etc.) into Kong Gateway configuration. Your Kong Gateway pods act as the data plane that processes traffic.
-
-3. **Generate mTLS Certificates**
-
-   Kong Gateway communicates with Konnect using mTLS certificates:
+If you want Konnect integration:
    ```bash
    # Generate certificates
    openssl req -new -x509 -nodes -newkey rsa:2048 \
@@ -727,7 +643,7 @@ flowchart TB
 | `cluster_cert` | Path to client certificate | `/etc/secrets/konnect-client-tls/tls.crt` |
 | `cluster_cert_key` | Path to client private key | `/etc/secrets/konnect-client-tls/tls.key` |
 
-### Step 5: Deploy ArgoCD Root App (Layers 3 & 4)
+### Step 6: Deploy ArgoCD Root App (Layers 3 & 4)
 
 ```bash
 # Get ArgoCD admin password
@@ -740,7 +656,25 @@ kubectl apply -f argocd/apps/root-app.yaml
 kubectl get applications -n argocd -w
 ```
 
-### Step 6: Verify Konnect Connection
+### Step 7: Verify Deployment
+
+#### Basic Verification (All Deployments)
+
+```bash
+# Verify Kong Gateway pods are running
+kubectl get pods -n kong
+
+# Check GatewayClass status
+kubectl get gatewayclass kong -o yaml
+
+# Check Gateway status
+kubectl get gateway kong-gateway -n kong -o yaml
+
+# Verify HTTPRoutes are working
+kubectl get httproutes -A
+```
+
+#### Konnect Verification (If Konnect Integration Enabled)
 
 1. **Check Data Plane Status in Konnect UI**
    - Go to Kong Konnect dashboard at [cloud.konghq.com](https://cloud.konghq.com)
@@ -766,7 +700,7 @@ kubectl get applications -n argocd -w
    - Verify it appears on your data plane within seconds
    - Analytics will start appearing within 1-2 minutes
 
-## Verification
+## Testing
 
 ### Test Endpoints
 
