@@ -415,8 +415,8 @@ flowchart TB
 | Layer | Tool | What It Creates |
 |-------|------|-----------------|
 | **Layer 1** | Terraform | VPC, Subnets (Public/Private), NAT/IGW, Route Tables |
-| **Layer 2** | Terraform | EKS, Node Groups, IAM (IRSA), LB Controller, Internal NLB, CloudFront + WAF + VPC Origin, ArgoCD |
-| **Layer 3 Pre-config** | kubectl + Konnect API | kong namespace, konnect-client-tls secret, Helm values with Konnect endpoints |
+| **Layer 2** | Terraform | EKS, Node Groups, IAM (IRSA), LB Controller, Internal NLB (port 443), CloudFront + WAF + VPC Origin (https-only), ArgoCD |
+| **Layer 3 Pre-config** | kubectl + scripts | kong namespace, TLS certificates (CA + server cert via `01-generate-certs.sh`), `kong-gateway-tls` secret, konnect-client-tls secret, Helm values with Konnect endpoints |
 | **Layer 3** | ArgoCD | Gateway API CRDs, Kong Gateway Enterprise (ClusterIP), Gateway, HTTPRoutes, Kong Plugins |
 | **Layer 4** | ArgoCD | Applications (app1, app2, users-api, health-responder) |
 
@@ -458,9 +458,9 @@ flowchart TB
         end
     end
 
-    CF --> VPCOrigin
+    CF -->|"TLS 1 (ACM)"| VPCOrigin
     VPCOrigin --> NLB
-    NLB --> Kong
+    NLB -->|"TLS 2 (Kong Cert)"| Kong
     Kong --> App1
     Kong --> App2
     Kong --> API
