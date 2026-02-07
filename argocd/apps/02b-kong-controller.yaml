@@ -47,13 +47,11 @@ spec:
             tlsClientCertSecretName: "kong-cluster-cert"
             license:
               enabled: true
-
-        # Gateway Discovery: KIC discovers Kong data plane via admin API
-        gatewayDiscovery:
-          enabled: true
-          adminApiService:
-            name: "kong-gateway-kong-admin"
-            namespace: "kong"
+          gatewayDiscovery:
+            enabled: true
+            adminApiService:
+              name: "kong-gateway-kong-admin"
+              namespace: "kong"
 
   destination:
     server: https://kubernetes.default.svc
