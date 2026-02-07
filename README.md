@@ -2,9 +2,11 @@
 
 **Author:** Shanaka Jayasundera - shanakaj@gmail.com
 
-This POC demonstrates how to implement Kubernetes Gateway API on AWS EKS with Kong Gateway, with optional integration to Kong Konnect for API management capabilities.
+This POC demonstrates how to implement Kubernetes Gateway API on AWS EKS with **Kong Gateway Enterprise**, integrated with **Kong Konnect** for centralized API management, analytics, and developer portal.
 
 While my previous posts used Istio as the Gateway API implementation, Kong Gateway offers a different approach—focusing on API gateway capabilities at the edge without the service mesh complexity.
+
+> **Licensing:** This project uses **Kong Gateway Enterprise** (`kong/kong-gateway` image) with licensing automatically managed by Kong Konnect. A [free trial](https://konghq.com/products/kong-konnect/register) gives you 30 days of full Enterprise functionality. An [OSS alternative](#alternative-kong-gateway-oss-without-konnect) is available if you don't have a Konnect subscription.
 
 This is particularly relevant for teams who:
 - Need API management features (rate limiting, authentication, developer portal) without a full service mesh
@@ -526,13 +528,32 @@ flowchart LR
 
 ---
 
+## Kong Gateway Editions & Licensing
+
+Kong Gateway comes in two editions. This project defaults to Enterprise via Konnect:
+
+| | Kong Gateway Enterprise (Default) | Kong Gateway OSS (Alternative) |
+|---|---|---|
+| **Docker Image** | `kong/kong-gateway` | `kong/kong` |
+| **License** | Automatically managed by Konnect | No license needed |
+| **Enterprise Plugins** | OpenID Connect, OAuth2 Introspection, mTLS, Vault, OPA, etc. | Not available |
+| **Analytics** | Konnect Observability (real-time dashboards) | Self-managed (Prometheus/Grafana) |
+| **Developer Portal** | Built-in via Konnect | Not available |
+| **Admin UI** | Kong Manager + Konnect Dashboard | Kong Manager (limited) |
+| **Gateway API Support** | Full (GatewayClass, Gateway, HTTPRoute) | Full (GatewayClass, Gateway, HTTPRoute) |
+| **Cost** | Free trial (30 days) → Plus or Enterprise tier | Free forever |
+
+> **Recommendation:** Start with the [Konnect free trial](https://konghq.com/products/kong-konnect/register) to get Enterprise features with zero license management. See the [OSS alternative](#alternative-kong-gateway-oss-without-konnect) section if you prefer to run without Konnect.
+
+---
+
 ## Prerequisites
 
 - AWS CLI configured with appropriate credentials
 - Terraform >= 1.5
 - kubectl
 - Helm 3.x
-- **Optional:** Kong Konnect account (for centralized management, analytics, and Developer Portal)
+- Kong Konnect account ([free trial](https://konghq.com/products/kong-konnect/register) or paid subscription)
 
 ## Deployment Steps
 
@@ -564,22 +585,27 @@ terraform apply -var="enable_cloudfront=true"
 $(terraform output -raw eks_get_credentials_command)
 ```
 
-### Step 4: (Optional) Configure Kong Konnect Integration
+### Step 4: Configure Kong Konnect Integration
 
-Kong Konnect is **optional**. The Gateway API implementation works without it. Konnect adds centralized analytics, Developer Portal, multi-cluster management, and AI Gateway features.
+This step connects your Kong Gateway Enterprise data plane to Konnect. Konnect automatically provisions the Enterprise license — no license file management required.
 
-**Skip this step if you don't need Konnect integration.**
+> **Don't have a Konnect account?** See the [OSS alternative](#alternative-kong-gateway-oss-without-konnect) to deploy without Konnect.
 
-If you want Konnect integration:
+1. **Create a Control Plane in Konnect**
+   - Sign in to [cloud.konghq.com](https://cloud.konghq.com)
+   - In the left sidebar, click **API Gateway**
+   - Click **+ New Control Plane** → choose **Kong Ingress Controller**
+   - Name it (e.g., `eks-demo`) and save
+   - Note the **Control Plane ID** from the overview page
 
-1. **Generate mTLS Certificates**
+2. **Generate mTLS Certificates**
    ```bash
    openssl req -new -x509 -nodes -newkey rsa:2048 \
      -subj "/CN=kongdp/C=US" \
      -keyout ./tls.key -out ./tls.crt -days 365
    ```
 
-2. **Create TLS Secret in Kubernetes**
+3. **Create TLS Secret in Kubernetes**
    ```bash
    kubectl create namespace kong
    kubectl create secret tls konnect-client-tls -n kong \
@@ -587,8 +613,13 @@ If you want Konnect integration:
      --key=./tls.key
    ```
 
-3. **Register Certificate with Konnect**
+4. **Register Certificate with Konnect**
    ```bash
+   # Set your Konnect variables
+   export KONNECT_REGION="us"          # us, eu, au, me, in, sg
+   export KONNECT_TOKEN="kpat_xxx..."  # Personal access token from Konnect
+   export CONTROL_PLANE_ID="your-cp-id-here"
+
    # Format certificate for API (remove newlines)
    CERT=$(awk 'NF {sub(/\r/, ""); printf "%s\\n",$0;}' tls.crt)
 
@@ -598,13 +629,13 @@ If you want Konnect integration:
      --json "{\"cert\": \"$CERT\"}"
    ```
 
-4. **Update Helm Values**
+5. **Update Helm Values**
 
    Update `k8s/kong/konnect-values.yaml` with your Konnect endpoints:
    ```yaml
    image:
-     repository: kong/kong-gateway
-     tag: "3.9"  # Use latest stable version
+     repository: kong/kong-gateway   # Enterprise image (license via Konnect)
+     tag: "3.9"
 
    ingressController:
      enabled: true
@@ -659,7 +690,7 @@ kubectl get applications -n argocd -w
 
 ### Step 6: Verify Deployment
 
-#### Basic Verification (All Deployments)
+#### Verify Gateway API Resources
 
 ```bash
 # Verify Kong Gateway pods are running
@@ -675,31 +706,33 @@ kubectl get gateway kong-gateway -n kong -o yaml
 kubectl get httproutes -A
 ```
 
-#### Konnect Verification (If Konnect Integration Enabled)
+#### Verify Konnect Connection
 
 1. **Check Data Plane Status in Konnect UI**
    - Go to Kong Konnect dashboard at [cloud.konghq.com](https://cloud.konghq.com)
    - In the left sidebar, click **API Gateway**
    - Click on your Control Plane to open the Overview dashboard
    - Click **Data Plane Nodes** in the sidebar to see connected nodes
-   - Your data plane node(s) should show status "Connected"
+   - Your data plane node(s) should show status **"Connected"**
+   - The Enterprise license is automatically applied — no manual license file needed
    
 2. **Verify from Kubernetes**
    ```bash
-   # Check Kong pod logs for successful connection
+   # Check Kong pod logs for successful Konnect connection
    kubectl logs -n kong -l app.kubernetes.io/name=kong --tail=50 | grep -i konnect
 
-   # Verify pods are running
-   kubectl get pods -n kong
+   # Verify pods are running with Enterprise image
+   kubectl get pods -n kong -o jsonpath='{.items[0].spec.containers[0].image}'
+   # Should show: kong/kong-gateway:3.9
 
    # Check for any connection errors
    kubectl logs -n kong -l app.kubernetes.io/name=kong | grep -i "error\|failed"
    ```
 
-3. **Verify Configuration Sync**
-   - Create a test route in Konnect UI
-   - Verify it appears on your data plane within seconds
-   - Analytics will start appearing within 1-2 minutes
+3. **Verify Enterprise Features**
+   - Analytics will start appearing in the Konnect dashboard within 1-2 minutes
+   - Enterprise plugins (OpenID Connect, OPA, Vault, etc.) are now available
+   - Configuration changes in Konnect UI sync to data planes within seconds
 
 ## Testing
 
@@ -879,6 +912,50 @@ Kong AI Gateway is built on top of Kong Gateway, designed for AI/LLM adoption:
 | **Kong Ingress Controller** | Kubernetes-native configuration via CRDs |
 | **Konnect APIs** | Full programmatic control over all Konnect features |
 | **KAi** | Kong's AI assistant for issue detection and fixes |
+
+---
+
+## Alternative: Kong Gateway OSS (Without Konnect)
+
+If you don't have a Kong Konnect subscription and don't need Enterprise features, you can deploy with the **open-source Kong Gateway** instead.
+
+### What You Lose Without Konnect
+
+| Feature | Enterprise (Konnect) | OSS |
+|---------|---------------------|-----|
+| Enterprise plugins (OIDC, OPA, Vault, mTLS) | Yes | No |
+| Centralized analytics dashboard | Yes | No — use Prometheus/Grafana |
+| Developer Portal | Yes | No |
+| Automatic license management | Yes | N/A |
+| Kong Manager UI | Full | Limited |
+| **Gateway API support** | **Full** | **Full** |
+| **Core plugins (rate limiting, JWT, CORS, etc.)** | **Yes** | **Yes** |
+
+### OSS Deployment Steps
+
+**Skip Step 4** (Konnect Integration) and make these changes:
+
+1. **Use the OSS Helm values** (`k8s/kong/values.yaml` instead of `konnect-values.yaml`):
+   ```yaml
+   image:
+     repository: kong/kong    # OSS image (not kong/kong-gateway)
+     tag: "3.9"
+
+   ingressController:
+     enabled: true
+     # No konnect section needed
+
+   gateway:
+     env:
+       database: "off"        # DB-less mode
+       # No konnect_mode, cluster_*, or role settings needed
+   ```
+
+2. **Update the ArgoCD app** to reference `values.yaml` instead of `konnect-values.yaml`
+
+3. **Deploy as normal** (Steps 1-3, then Step 5-6), skipping the Konnect verification
+
+> **Note:** The Gateway API resources (GatewayClass, Gateway, HTTPRoute) work identically with both editions. Only the available plugin set and management capabilities differ.
 
 ---
 
