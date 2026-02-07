@@ -564,13 +564,72 @@ flowchart TB
 
 2. **Create a Control Plane**
    
-   Using the Konnect UI:
-   - In the left sidebar, click **API Gateway**
-   - Click **+ New Control Plane**
-   - Select **Kong Ingress Controller** (this provides Kubernetes Gateway API support)
-   
-   > **Note:** "Kong Ingress Controller" in Konnect is the correct choice for Kubernetes Gateway API deployments. KIC is the controller that watches Gateway/HTTPRoute CRDs and configures Kong Gateway data planes. Your Kong Gateway pods act as the data plane, while KIC manages the Gateway API resources.
+   There are two approaches for Kubernetes Gateway API with Konnect:
 
+   **Option A: Kong Gateway Operator (Recommended)**
+   
+   The Kong Gateway Operator provides a fully declarative, Kubernetes-native approach. When you create a `Gateway` resource, the Operator automatically provisions Kong Gateway data planes.
+   
+   ```bash
+   # Install Kong Gateway Operator with Konnect support
+   helm repo add kong https://charts.konghq.com
+   helm repo update
+   
+   helm upgrade --install kong-operator kong/kong-operator -n kong-system \
+     --create-namespace \
+     --set env.ENABLE_CONTROLLER_KONNECT=true
+   
+   # Create Konnect API credentials secret
+   kubectl create namespace kong
+   kubectl create secret generic konnect-api-auth -n kong \
+     --from-literal=token='your-konnect-pat-token'
+   
+   # Create control plane via CRD (automatically creates in Konnect)
+   cat <<EOF | kubectl apply -f -
+   apiVersion: konnect.konghq.com/v1alpha1
+   kind: KonnectGatewayControlPlane
+   metadata:
+     name: gateway-control-plane
+     namespace: kong
+   spec:
+     createControlPlaneRequest:
+       name: eks-kong-gateway
+     konnect:
+       authRef:
+         name: konnect-api-auth
+   EOF
+   ```
+   
+   Then create your Gateway API resources:
+   ```yaml
+   apiVersion: gateway.networking.k8s.io/v1
+   kind: GatewayClass
+   metadata:
+     name: kong
+   spec:
+     controllerName: konghq.com/gateway-operator
+   ---
+   apiVersion: gateway.networking.k8s.io/v1
+   kind: Gateway
+   metadata:
+     name: kong
+     namespace: kong
+   spec:
+     gatewayClassName: kong
+     listeners:
+       - name: http
+         port: 80
+         protocol: HTTP
+   ```
+
+   **Option B: Direct Helm Installation**
+   
+   For more control over the deployment, use Helm directly:
+   
+   - In the Konnect UI left sidebar, click **API Gateway**
+   - Click **+ New Control Plane**
+   - Select **Kong Ingress Controller** (this is for Kubernetes Gateway API deployments)
+   
    Or using the API:
    ```bash
    # Set your Konnect Personal Access Token
@@ -578,7 +637,6 @@ flowchart TB
    export KONNECT_REGION='us'  # Options: us, eu, au, me, in, sg
 
    # Create a Control Plane for Kubernetes Gateway API deployments
-   # Note: CLUSTER_TYPE_K8S_INGRESS_CONTROLLER enables Gateway API support
    CONTROL_PLANE_DETAILS=$(curl -X POST "https://${KONNECT_REGION}.api.konghq.com/v2/control-planes" \
      -H "Authorization: Bearer $KONNECT_TOKEN" \
      --json '{
@@ -591,6 +649,8 @@ flowchart TB
    CONTROL_PLANE_ENDPOINT=$(echo $CONTROL_PLANE_DETAILS | jq -r '.config.control_plane_endpoint | sub("https://";"")')
    TELEMETRY_ENDPOINT=$(echo $CONTROL_PLANE_DETAILS | jq -r '.config.telemetry_endpoint | sub("https://";"")')
    ```
+
+   > **Understanding the Architecture:** Both options use Kong Gateway with Gateway API support. The "Kong Ingress Controller" control plane type in Konnect refers to the Kubernetes controller component that translates Gateway API resources (Gateway, HTTPRoute, etc.) into Kong Gateway configuration. Your Kong Gateway pods act as the data plane that processes traffic.
 
 3. **Generate mTLS Certificates**
 
