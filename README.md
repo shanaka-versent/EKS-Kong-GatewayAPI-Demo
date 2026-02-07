@@ -215,7 +215,6 @@ Client → CloudFront + WAF → VPC Origin → Internal NLB → Kong Gateway →
 The architecture implements **TLS termination at the CloudFront edge** with fully private internal connectivity via VPC Origin (PrivateLink). No public endpoints are exposed inside the VPC.
 
 ```mermaid
-%%{init: {'theme': 'neutral'}}%%
 sequenceDiagram
     participant Client
     participant CF as CloudFront + WAF
@@ -254,8 +253,6 @@ sequenceDiagram
     Kong-->>-NLB: Response
     NLB-->>-CF: Response
     CF-->>-Client: HTTPS Response
-
-    Note over Kong,KIC: KIC watches Gateway API resources<br/>and configures Kong data plane
 ```
 
 ### How It Maps to This Repo
