@@ -1045,6 +1045,101 @@ If you don't have a Kong Konnect subscription and don't need Enterprise features
 
 ---
 
+## Appendix: Kong Gateway as API Management with Istio Gateway
+
+If you're already using **Istio Gateway** as your K8s Gateway API implementation and want to replace **AWS API Gateway** (or Azure APIM) with Kong for API management, this is fully supported. Kong Gateway can sit as the API management layer in front of Istio, replacing the cloud-managed API gateway while keeping Istio for routing and service mesh.
+
+### Architecture: Istio Gateway + Kong API Management
+
+```mermaid
+%%{init: {'theme': 'neutral'}}%%
+flowchart TB
+    Client["Client"]
+
+    subgraph Edge["CloudFront / Front Door"]
+        direction LR
+        CDN["CDN + WAF"]
+    end
+
+    subgraph VPC["VPC / VNet — Private Subnets"]
+        NLB["Internal NLB"]
+
+        subgraph EKS["EKS Cluster"]
+
+            subgraph KongNS["kong namespace"]
+                KongGW["Kong Gateway<br/>(API Management Only)"]
+                Plugins["Kong Plugins<br/>Rate Limit · Auth · Transforms"]
+            end
+
+            subgraph IstioNS["istio-ingress namespace"]
+                IstioGW["Istio Gateway<br/>(K8s Gateway API)"]
+            end
+
+            subgraph Apps["Application Namespaces"]
+                HR["HTTPRoutes"]
+                SVC["Backend Services"]
+            end
+        end
+    end
+
+    subgraph Konnect["Kong Konnect SaaS"]
+        direction LR
+        Analytics["Analytics"]
+        Portal["Dev Portal"]
+    end
+
+    Client --> CDN
+    CDN --> NLB
+    NLB --> KongGW
+    KongGW --> Plugins
+    Plugins --> IstioGW
+    IstioGW --> HR
+    HR --> SVC
+    KongGW -.-> Konnect
+```
+
+### How It Works
+
+| Layer | Component | Role |
+|-------|-----------|------|
+| **API Management** | Kong Gateway | Rate limiting, authentication (JWT, OAuth, OIDC), request transforms, CORS, API key management |
+| **K8s Gateway API Routing** | Istio Gateway | GatewayClass, Gateway, HTTPRoute — routes traffic to backend services |
+| **Service Mesh** | Istio Ambient | East-west mTLS between services (optional, independent of north-south) |
+| **Management Plane** | Kong Konnect (SaaS) | Centralized analytics, developer portal, plugin management, multi-cluster visibility |
+
+### What Changes vs AWS API Gateway?
+
+| Aspect | AWS API Gateway | Kong Gateway |
+|--------|-----------------|--------------|
+| **Deployment** | AWS-managed service (outside K8s) | Deployed inside K8s (same cluster as Istio) |
+| **Connectivity** | VPC Link to NLB | Direct pod-to-pod within cluster |
+| **Auth** | Lambda Authorizers | Built-in plugins (JWT, OAuth, OIDC, API keys) |
+| **Rate Limiting** | Usage Plans | KongPlugin (per-route, per-consumer) |
+| **Developer Portal** | Not built-in | Kong Konnect Dev Portal |
+| **Analytics** | CloudWatch | Kong Konnect Analytics |
+| **Cost Model** | Per-request pricing ($3.50/million) | Kong license + compute |
+| **Vendor Lock-in** | AWS-specific | Cloud-agnostic (runs anywhere K8s runs) |
+
+### Which Kong Products Are Involved?
+
+| Product | Required? | Role |
+|---------|-----------|------|
+| **Kong Gateway** (Data Plane) | Yes | Deployed in K8s as a reverse proxy for API management. Runs the plugin chain (rate limiting, auth, transforms) before forwarding to Istio Gateway |
+| **Kong Ingress Controller** | Optional | Not needed for Gateway API routing (Istio handles that). Only needed if you want Kong to also manage its own routes via K8s CRDs |
+| **Kong Konnect** (SaaS) | Recommended | Provides centralized analytics, developer portal, and management UI. Without it, Kong Gateway still works but you lose the SaaS management features |
+| **Kong Gateway Enterprise** | Recommended | Required for enterprise plugins (OIDC, OPA, Vault integration). OSS edition works for basic plugins (rate limiting, JWT, CORS) |
+
+### When to Use This Pattern
+
+- You're **already running Istio** for service mesh (mTLS between services) and want to add API management
+- You want to **replace AWS API Gateway / Azure APIM** with a cloud-agnostic, in-cluster solution
+- You need a **developer portal** and **centralized analytics** for your APIs
+- You want **consistent API management** across multi-cloud (same Kong config works on AWS, Azure, GCP)
+
+> **Note:** In this pattern, Kong Gateway does NOT implement the K8s Gateway API — Istio does. Kong acts purely as an API management reverse proxy sitting in front of Istio Gateway. This is different from this repo's main architecture where Kong is BOTH the Gateway API implementation and the API management layer.
+
+---
+
 ## Cleanup
 
 ```bash
