@@ -35,8 +35,9 @@ flowchart TB
         ILB["Internal Load Balancer"]
 
         subgraph K8s["Kubernetes Cluster"]
-            direction LR
-            APIGW["API Gateway"] ~~~ GW["K8s Gateway API"] ~~~ SVC["Backend Services"]
+            APIGW["API Gateway"]
+            GW["K8s Gateway API"]
+            SVC["Backend Services"]
         end
     end
 
