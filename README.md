@@ -1110,19 +1110,6 @@ flowchart TB
     KongGW -.->|"Outbound Only"| KonnectSaaS
 ```
 
-### Where Does Each Layer Sit?
-
-| Layer | Component | Location |
-|-------|-----------|----------|
-| **CDN + WAF** | CloudFront + AWS WAF | AWS Edge |
-| **API Management** | Kong Gateway on EC2/ECS (**no public endpoint**) | Your VPC — private subnets (outside EKS, inside your network) |
-| **Management Plane** | Kong Konnect SaaS — analytics, dev portal, centralized config | Kong SaaS at `cloud.konghq.com` (outbound only) |
-| **CloudFront → Kong** | VPC Origin (PrivateLink) → Internal NLB → Kong | AWS backbone (fully private) |
-| **Kong → K8s** | Internal NLB → Istio Gateway | Same VPC, private subnets |
-| **Kong → Non-K8s** | Direct upstream routing to EC2, ECS, Lambda, or external services | Same VPC or via PrivateLink |
-| **K8s Gateway API** | Istio Gateway + HTTPRoutes | Inside the EKS cluster |
-| **Service Mesh** | Istio Ambient (optional) | Inside the EKS cluster |
-
 ### Deployment Options for Kong Outside the Cluster
 
 There are **two ways** to deploy Kong as an external API management layer, and they have **very different security models** for the CloudFront → Kong link:
