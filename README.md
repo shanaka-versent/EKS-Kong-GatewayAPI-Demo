@@ -1272,15 +1272,6 @@ AWS WAF and Kong plugins remain **complementary**:
 - **WAF at CloudFront**: OWASP Top 10, bot detection, geo-blocking, IP reputation — stops malicious traffic at the edge
 - **Kong Plugins**: JWT/OAuth/OIDC authentication, per-consumer rate limiting, request transforms — handles API-specific policies requiring application context
 
-### What Kong Products Are Involved?
-
-| Product | Role | Required? |
-|---------|------|-----------|
-| **Kong Konnect** (SaaS Platform) | Management plane — centralized analytics, developer portal, plugin configuration, multi-cluster management | Yes |
-| **Dedicated Cloud Gateways** (part of Konnect) | Fully managed Kong data plane instances sitting outside your cluster — direct replacement for AWS API Gateway | Yes (for the managed option) |
-| **Kong Gateway Enterprise** | The data plane runtime that processes requests and runs plugins. In the managed option, Kong operates this for you | Included in Dedicated Cloud Gateways |
-| **Kong Ingress Controller** | NOT needed — Istio handles K8s Gateway API routing inside the cluster. Kong sits outside | No |
-
 ### When to Use This Pattern
 
 - You want to **replace AWS API Gateway** with a cloud-agnostic managed API gateway that sits in the **same architectural position** (outside the cluster)
