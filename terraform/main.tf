@@ -205,7 +205,7 @@ resource "kubernetes_manifest" "target_group_binding" {
       targetType     = "ip"
       serviceRef = {
         name = "kong-gateway-kong-proxy" # Kong Helm chart proxy service (release: kong-gateway)
-        port = 443
+        port = 80 # NLB terminates TLS, forwards HTTP to Kong
       }
       networking = {
         ingress = [{
@@ -216,7 +216,7 @@ resource "kubernetes_manifest" "target_group_binding" {
           }]
           ports = [
             {
-              port     = 8443 # Kong proxy TLS container port
+              port     = 8000 # Kong proxy HTTP container port
               protocol = "TCP"
             },
             {

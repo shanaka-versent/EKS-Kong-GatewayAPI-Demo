@@ -15,37 +15,48 @@
 # (provided by AWS Load Balancer Controller).
 #
 # Traffic flow:
-# CloudFront --> VPC Origin (AWS backbone) --> Internal NLB :443 --> Kong Pods :8443 (TLS)
+# CloudFront --> VPC Origin (AWS backbone/HTTP) --> Internal NLB :80 --> Kong Pods :8000 (HTTP)
 
 # ==============================================================================
 # SECURITY GROUP
 # ==============================================================================
 
-# CloudFront VPC Origin uses hyperplane ENIs placed inside the VPC subnets,
-# so traffic arrives from within the VPC CIDR — not from CloudFront public IPs.
+# CloudFront VPC Origin creates a managed SG "CloudFront-VPCOrigins-Service-SG"
+# in the VPC. Traffic arrives via PrivateLink from CloudFront's origin-facing IPs
+# (NOT from the VPC CIDR). We reference the CloudFront-managed SG for tightest security.
 # The NLB setting enforce_security_group_inbound_rules_on_private_link_traffic = "on"
 # ensures only authorized CloudFront VPC Origin PrivateLink traffic is accepted.
+
+# Look up the CloudFront-managed SG (created when VPC Origin is deployed)
+data "aws_security_group" "cloudfront_vpc_origin" {
+  filter {
+    name   = "group-name"
+    values = ["CloudFront-VPCOrigins-Service-SG"]
+  }
+  vpc_id = var.vpc_id
+}
+
 resource "aws_security_group" "nlb" {
   name        = "nlb-${var.name_prefix}"
   description = "Security group for Internal NLB - allows traffic from CloudFront VPC Origin"
   vpc_id      = var.vpc_id
 
-  # Inbound: Allow HTTPS from CloudFront VPC Origin ENIs (within VPC)
+  # Inbound: Allow HTTP from CloudFront VPC Origin managed SG
   ingress {
-    description = "HTTPS from CloudFront VPC Origin"
-    from_port   = 443
-    to_port     = 443
-    protocol    = "tcp"
-    cidr_blocks = [var.vpc_cidr]
+    description     = "HTTP from CloudFront VPC Origin"
+    from_port       = 80
+    to_port         = 80
+    protocol        = "tcp"
+    security_groups = [data.aws_security_group.cloudfront_vpc_origin.id]
   }
 
-  # Inbound: Allow health check traffic from CloudFront VPC Origin ENIs
+  # Inbound: Allow health check traffic from CloudFront VPC Origin managed SG
   ingress {
-    description = "Health check from CloudFront VPC Origin"
-    from_port   = var.health_check_port
-    to_port     = var.health_check_port
-    protocol    = "tcp"
-    cidr_blocks = [var.vpc_cidr]
+    description     = "Health check from CloudFront VPC Origin"
+    from_port       = var.health_check_port
+    to_port         = var.health_check_port
+    protocol        = "tcp"
+    security_groups = [data.aws_security_group.cloudfront_vpc_origin.id]
   }
 
   # Outbound: Allow all traffic to VPC CIDR (for target health checks and Kong pods)
@@ -93,7 +104,7 @@ resource "aws_lb" "internal" {
 
 resource "aws_lb_target_group" "kong" {
   name        = "tg-kong-${var.name_prefix}"
-  port        = 443
+  port        = 8000
   protocol    = "TCP"
   vpc_id      = var.vpc_id
   target_type = "ip"
@@ -121,9 +132,9 @@ resource "aws_lb_target_group" "kong" {
 # LISTENER
 # ==============================================================================
 
-resource "aws_lb_listener" "tcp_443" {
+resource "aws_lb_listener" "http" {
   load_balancer_arn = aws_lb.internal.arn
-  port              = 443
+  port              = 80
   protocol          = "TCP"
 
   default_action {
