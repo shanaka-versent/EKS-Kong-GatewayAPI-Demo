@@ -60,6 +60,15 @@ spec:
             containerPort: 8443
             servicePort: 443
 
+        # Readiness probe: use /status (Kong is running) instead of /status/ready
+        # (Kong has config). Without this, DB-less Kong without initial config returns
+        # 503 on /status/ready, preventing KIC from discovering pods via admin API.
+        readinessProbe:
+          httpGet:
+            path: /status
+            port: status
+            scheme: HTTP
+
         # Status endpoint
         status:
           enabled: true
