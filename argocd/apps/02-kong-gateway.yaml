@@ -36,29 +36,21 @@ spec:
         gateway:
           enabled: true
 
-        # Kong Ingress Controller
+        # Kong Ingress Controller with Konnect integration
         ingressController:
           enabled: true
           installCRDs: true
           env:
             feature_gates: "GatewayAlpha=true"
-
-        # Kong Gateway environment variables for Konnect
-        env:
-          # Control Plane connection
-          cluster_control_plane: "d7772b3e-a7a6-4a7b-998e-5b050321def1.us.cp0.konghq.com:443"
-          cluster_server_name: "d7772b3e-a7a6-4a7b-998e-5b050321def1.us.cp0.konghq.com"
-          # Telemetry endpoint for analytics
-          cluster_telemetry_endpoint: "d7772b3e-a7a6-4a7b-998e-5b050321def1.us.tp0.konghq.com:443"
-          cluster_telemetry_server_name: "d7772b3e-a7a6-4a7b-998e-5b050321def1.us.tp0.konghq.com"
-          # Certificate paths (mounted from secrets)
-          cluster_cert: /etc/secrets/konnect-client-tls/tls.crt
-          cluster_cert_key: /etc/secrets/konnect-client-tls/tls.key
-          lua_ssl_trusted_certificate: system
-
-        # Mount Konnect certificate secrets
-        secretVolumes:
-          - konnect-client-tls
+          # KIC 3.x native Konnect integration
+          konnect:
+            enabled: true
+            apiHostname: "us.kic.api.konghq.com"
+            controlPlaneID: "d7772b3e-a7a6-4a7b-998e-5b050321def1"
+            tlsClientCert:
+              secretName: "konnect-client-tls"
+            license:
+              enabled: true
 
         # Kong Gateway (Data Plane)
         # NLB is Terraform-managed for CloudFront VPC Origin integration
