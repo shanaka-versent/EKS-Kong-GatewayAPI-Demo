@@ -67,10 +67,10 @@ flowchart TB
         end
     end
 
-    Client --> CDN
+    Client -->|"TLS 1"| CDN
     CDN --> PL
     PL --> ILB
-    ILB --> APIGW
+    ILB -->|"TLS 2"| APIGW
     APIGW --> GW
     GW --> SVC
 ```
@@ -181,11 +181,11 @@ flowchart TB
         Portal["Dev Portal"]
     end
 
-    Client --> CF
+    Client -->|"TLS 1 (ACM)"| CF
     CF --> WAF
     WAF --> VPCOrigin
     VPCOrigin --> NLB
-    NLB --> TGB
+    NLB -->|"TLS 2 (Kong Cert)"| TGB
     TGB --> KongDP
 
     GWClass --> KIC
