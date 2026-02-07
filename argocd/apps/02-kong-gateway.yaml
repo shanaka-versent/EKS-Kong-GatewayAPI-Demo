@@ -43,6 +43,21 @@ spec:
           env:
             feature_gates: "GatewayAlpha=true"
 
+        # Konnect data plane connection (AU region)
+        # Kong reports telemetry/analytics to Konnect; KIC manages routing config
+        env:
+          cluster_control_plane: "b5ec5fb109.au.cp0.konghq.com:443"
+          cluster_server_name: "b5ec5fb109.au.cp0.konghq.com"
+          cluster_telemetry_endpoint: "b5ec5fb109.au.tp0.konghq.com:443"
+          cluster_telemetry_server_name: "b5ec5fb109.au.tp0.konghq.com"
+          cluster_cert: /etc/secrets/konnect-client-tls/tls.crt
+          cluster_cert_key: /etc/secrets/konnect-client-tls/tls.key
+          lua_ssl_trusted_certificate: system
+
+        # Mount Konnect certificate secrets
+        secretVolumes:
+          - konnect-client-tls
+
         # Kong Gateway (Data Plane)
         # NLB is Terraform-managed for CloudFront VPC Origin integration
         # Kong pods registered via TargetGroupBinding CRD (AWS LB Controller)
