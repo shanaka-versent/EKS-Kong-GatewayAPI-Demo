@@ -528,36 +528,141 @@ $(terraform output -raw eks_get_credentials_command)
 
 ### Step 4: Configure Kong Konnect Integration
 
-Before deploying Kong Gateway, set up Kong Konnect credentials:
+Kong Konnect is Kong's unified API platform that provides a cloud-hosted control plane while allowing you to run data planes in your own infrastructure. This hybrid architecture gives you centralized management with data sovereignty.
 
-1. Log in to [Kong Konnect](https://cloud.konghq.com)
-2. Create a new Control Plane (or use existing)
-3. Go to **Data Plane Nodes** → **New Data Plane Node**
-4. Copy the cluster endpoint and download certificates
+#### Understanding the Konnect Architecture
 
-```bash
-# Create Kong namespace
-kubectl create namespace kong
+```mermaid
+flowchart TB
+    subgraph Konnect["Kong Konnect (Cloud-Hosted)"]
+        CP["Control Plane"]
+        Analytics["Observability & Analytics"]
+        Portal["Developer Portal"]
+        Catalog["Service Catalog"]
+        Identity["Kong Identity"]
+    end
 
-# Create TLS secret for Konnect connection
-kubectl create secret tls konnect-client-tls -n kong \
-  --cert=/path/to/tls.crt \
-  --key=/path/to/tls.key
+    subgraph YourInfra["Your Infrastructure (EKS)"]
+        DP1["Data Plane Node 1"]
+        DP2["Data Plane Node 2"]
+        DP3["Data Plane Node N"]
+    end
 
-# Create cluster certificate secret
-kubectl create secret generic konnect-cluster-cert -n kong \
-  --from-file=ca.crt=/path/to/ca.crt
+    CP -->|"Configuration Push (TLS/mTLS)"| DP1
+    CP -->|"Configuration Push"| DP2
+    CP -->|"Configuration Push"| DP3
+    DP1 -->|"Telemetry Data"| Analytics
+    DP2 -->|"Telemetry Data"| Analytics
+    DP3 -->|"Telemetry Data"| Analytics
 ```
 
-Update `k8s/kong/konnect-values.yaml` with your Konnect endpoints:
-```yaml
-gateway:
-  env:
-    cluster_control_plane: "<your-cp>.us.cp0.konghq.com:443"
-    cluster_server_name: "<your-cp>.us.cp0.konghq.com"
-    cluster_telemetry_endpoint: "<your-cp>.us.tp0.konghq.com:443"
-    cluster_telemetry_server_name: "<your-cp>.us.tp0.konghq.com"
-```
+#### Konnect Control Plane Setup
+
+1. **Log in to Kong Konnect**
+   - Go to [cloud.konghq.com](https://cloud.konghq.com)
+   - Select your geographic region (US, EU, AU, ME, IN, or SG)
+
+2. **Create a Control Plane**
+   
+   Using the Konnect UI:
+   - Navigate to **Gateway Manager** → **New Control Plane**
+   - Select **Kong Ingress Controller** for Kubernetes Gateway API deployments
+   - Or select **Self-Managed Hybrid** for standard Kong Gateway deployments
+
+   Or using the API:
+   ```bash
+   # Set your Konnect Personal Access Token
+   export KONNECT_TOKEN='your-pat-token'
+   export KONNECT_REGION='us'  # Options: us, eu, au, me, in, sg
+
+   # Create a KIC Control Plane
+   CONTROL_PLANE_DETAILS=$(curl -X POST "https://${KONNECT_REGION}.api.konghq.com/v2/control-planes" \
+     -H "Authorization: Bearer $KONNECT_TOKEN" \
+     --json '{
+       "name": "eks-kong-gateway",
+       "cluster_type": "CLUSTER_TYPE_K8S_INGRESS_CONTROLLER"
+     }')
+
+   # Extract endpoints
+   CONTROL_PLANE_ID=$(echo $CONTROL_PLANE_DETAILS | jq -r .id)
+   CONTROL_PLANE_ENDPOINT=$(echo $CONTROL_PLANE_DETAILS | jq -r '.config.control_plane_endpoint | sub("https://";"")')
+   TELEMETRY_ENDPOINT=$(echo $CONTROL_PLANE_DETAILS | jq -r '.config.telemetry_endpoint | sub("https://";"")')
+   ```
+
+3. **Generate mTLS Certificates**
+
+   Kong Gateway communicates with Konnect using mTLS certificates:
+   ```bash
+   # Generate certificates
+   openssl req -new -x509 -nodes -newkey rsa:2048 \
+     -subj "/CN=kongdp/C=US" \
+     -keyout ./tls.key -out ./tls.crt -days 365
+
+   # Create Kong namespace
+   kubectl create namespace kong
+
+   # Create TLS secret for Konnect connection
+   kubectl create secret tls konnect-client-tls -n kong \
+     --cert=./tls.crt \
+     --key=./tls.key
+   ```
+
+4. **Register Certificate with Konnect**
+   ```bash
+   # Format certificate for API (remove newlines)
+   CERT=$(awk 'NF {sub(/\r/, ""); printf "%s\\n",$0;}' tls.crt)
+
+   # Register the certificate with Konnect
+   curl -X POST "https://${KONNECT_REGION}.api.konghq.com/v2/control-planes/${CONTROL_PLANE_ID}/dp-client-certificates" \
+     -H "Authorization: Bearer $KONNECT_TOKEN" \
+     --json "{\"cert\": \"$CERT\"}"
+   ```
+
+5. **Update Helm Values**
+
+   Update `k8s/kong/konnect-values.yaml` with your Konnect endpoints:
+   ```yaml
+   image:
+     repository: kong/kong-gateway
+     tag: "3.9"  # Use latest stable version
+
+   ingressController:
+     enabled: true
+     konnect:
+       enabled: true
+       controlPlaneId: "<your-control-plane-id>"
+       tlsClientCertSecretName: konnect-client-tls
+
+   gateway:
+     env:
+       role: data_plane
+       database: "off"
+       konnect_mode: "on"
+       vitals: "off"
+       cluster_mtls: pki
+       cluster_control_plane: "<your-cp>.us.cp0.konghq.com:443"
+       cluster_server_name: "<your-cp>.us.cp0.konghq.com"
+       cluster_telemetry_endpoint: "<your-tp>.us.tp0.konghq.com:443"
+       cluster_telemetry_server_name: "<your-tp>.us.tp0.konghq.com"
+       cluster_cert: /etc/secrets/konnect-client-tls/tls.crt
+       cluster_cert_key: /etc/secrets/konnect-client-tls/tls.key
+       lua_ssl_trusted_certificate: system
+
+     secretVolumes:
+       - konnect-client-tls
+   ```
+
+#### Konnect Configuration Parameters Reference
+
+| Parameter | Description | Example |
+|-----------|-------------|---------|
+| `cluster_control_plane` | Control plane endpoint (host:port) | `example.us.cp0.konghq.com:443` |
+| `cluster_server_name` | SNI for TLS connection to control plane | `example.us.cp0.konghq.com` |
+| `cluster_telemetry_endpoint` | Telemetry endpoint for analytics | `example.us.tp0.konghq.com:443` |
+| `cluster_telemetry_server_name` | SNI for telemetry TLS connection | `example.us.tp0.konghq.com` |
+| `cluster_mtls` | mTLS mode (`pki` for Konnect) | `pki` |
+| `cluster_cert` | Path to client certificate | `/etc/secrets/konnect-client-tls/tls.crt` |
+| `cluster_cert_key` | Path to client private key | `/etc/secrets/konnect-client-tls/tls.key` |
 
 ### Step 5: Deploy ArgoCD Root App (Layers 3 & 4)
 
@@ -574,10 +679,27 @@ kubectl get applications -n argocd -w
 
 ### Step 6: Verify Konnect Connection
 
-1. Go to Kong Konnect dashboard
-2. Navigate to **Gateway Manager** → Your Control Plane
-3. You should see your data plane node connected
-4. Analytics will start appearing within minutes
+1. **Check Data Plane Status in Konnect UI**
+   - Go to Kong Konnect dashboard
+   - Navigate to **Gateway Manager** → Your Control Plane
+   - You should see your data plane node(s) connected with status "Connected"
+   
+2. **Verify from Kubernetes**
+   ```bash
+   # Check Kong pod logs for successful connection
+   kubectl logs -n kong -l app.kubernetes.io/name=kong --tail=50 | grep -i konnect
+
+   # Verify pods are running
+   kubectl get pods -n kong
+
+   # Check for any connection errors
+   kubectl logs -n kong -l app.kubernetes.io/name=kong | grep -i "error\|failed"
+   ```
+
+3. **Verify Configuration Sync**
+   - Create a test route in Konnect UI
+   - Verify it appears on your data plane within seconds
+   - Analytics will start appearing within 1-2 minutes
 
 ## Verification
 
@@ -616,15 +738,149 @@ kubectl port-forward svc/argocd-server -n argocd 8080:443
 # Password: terraform output -raw argocd_admin_password
 ```
 
-## Kong Konnect Features
+---
+
+## Kong Konnect Platform Overview
+
+Kong Konnect is a unified API platform that provides centralized management for APIs, LLMs, events, and microservices. It combines a cloud-hosted control plane with flexible data plane deployment options.
+
+### Konnect Applications & Features
+
+#### 1. API Gateway Management
+- **Control Plane Management**: Centralized configuration for all Kong Gateway instances
+- **Data Plane Monitoring**: Real-time health and status of all connected data planes
+- **Configuration Sync**: Automatic propagation of routes, services, and plugins to data planes
+- **Version Compatibility**: Control planes support data planes with the same major version
+
+#### 2. Konnect Observability (Analytics)
+Real-time, highly contextual analytics platform providing deep insights into API health, performance, and usage.
+
+| Capability | Description |
+|------------|-------------|
+| **Traffic Metrics** | Request counts, throughput, and bandwidth analytics |
+| **Latency Analysis** | P50, P95, P99 latency percentiles with breakdown |
+| **Error Tracking** | 4xx/5xx error rates with detailed error codes |
+| **Consumer Analytics** | Per-consumer usage patterns and quotas |
+| **Custom Dashboards** | Build custom dashboards with saved queries |
+| **API Request Logs** | Near real-time access to detailed request records |
+
+#### 3. Developer Portal
+A customizable website for developers to locate, access, and consume API services.
 
 | Feature | Description |
 |---------|-------------|
-| **Analytics Dashboard** | Real-time traffic metrics, latency percentiles, error rates |
-| **Service Catalog** | Visual inventory of all your APIs and routes |
-| **Developer Portal** | Auto-generated API documentation, try-it-out, API key self-service |
-| **Centralized Config** | Manage plugins and routes from UI (syncs to data plane) |
-| **Multi-Cluster View** | Manage multiple EKS clusters from single pane |
+| **API Discovery** | Searchable catalog of available APIs |
+| **Interactive Docs** | OpenAPI/Swagger-based "Try It Out" functionality |
+| **Self-Service Registration** | Developers can self-register for API access |
+| **API Key Management** | Self-service API key generation and rotation |
+| **Application Management** | Developers manage their own applications |
+| **Customization** | Full portal theming and branding support |
+
+#### 4. Service Catalog
+Centralized catalog of all services running in your organization.
+
+- Automatic service discovery from multiple sources
+- Integration with Konnect Analytics for service health
+- Service ownership and documentation management
+- Cross-reference with Developer Portal APIs
+
+#### 5. Kong Identity
+OAuth 2.0 and OpenID Connect identity provider for machine-to-machine authentication.
+
+```mermaid
+sequenceDiagram
+    participant Client as Client App
+    participant Identity as Kong Identity
+    participant Gateway as Kong Gateway
+    participant API as Backend API
+
+    Client->>Identity: Request access token (client credentials)
+    Identity->>Identity: Validate credentials
+    Identity-->>Client: Access token + scope + expiry
+    Client->>Gateway: API request + access token
+    Gateway->>Identity: Validate token
+    Identity-->>Gateway: Token valid
+    Gateway->>API: Forward request
+    API-->>Client: Response
+```
+
+**Supported Plugins:**
+- OpenID Connect plugin
+- OAuth 2.0 Introspection plugin
+- Upstream OAuth plugin
+
+#### 6. Metering & Billing
+Full system for tracking real-time usage, pricing products, enforcing entitlements, and generating invoices.
+
+#### 7. Konnect Debugger
+Real-time trace-level visibility into API traffic for troubleshooting.
+
+| Feature | Description |
+|---------|-------------|
+| **On-Demand Tracing** | Targeted deep traces on specific data planes |
+| **Request Lifecycle** | Visualize entire request processing pipeline |
+| **Plugin Execution** | See order and timing of all plugin executions |
+| **Sampling Criteria** | Filter traces by method, path, status, latency |
+| **Log Correlation** | Traces correlated with Kong Gateway logs |
+| **7-Day Retention** | Debug sessions retained for up to 7 days |
+
+### Data Plane Hosting Options
+
+Kong Konnect supports multiple data plane hosting options:
+
+| Option | Description | Best For |
+|--------|-------------|----------|
+| **Dedicated Cloud Gateways** | Fully-managed by Kong in AWS, Azure, or GCP | Zero-ops, automatic scaling |
+| **Serverless Gateways** | Lightweight, auto-provisioned gateways | Dev/test, rapid experimentation |
+| **Self-Hosted** | Deploy on your infrastructure (K8s, VMs, bare metal) | Data sovereignty, compliance |
+
+**This demo uses Self-Hosted data planes on EKS.**
+
+### Supported Geographic Regions
+
+Konnect Control Planes are available in these regions:
+
+| Region | Code | API Endpoint |
+|--------|------|--------------|
+| United States | `us` | `us.api.konghq.com` |
+| Europe | `eu` | `eu.api.konghq.com` |
+| Australia | `au` | `au.api.konghq.com` |
+| Middle East | `me` | `me.api.konghq.com` |
+| India | `in` | `in.api.konghq.com` |
+| Singapore (Beta) | `sg` | `sg.api.konghq.com` |
+
+### AI Gateway Capabilities
+
+Kong AI Gateway is built on top of Kong Gateway, designed for AI/LLM adoption:
+
+- **AI Rate Limiting**: Rate limit by tokens, requests, or cost
+- **AI Prompt Guard**: Filter and moderate prompts
+- **AI Request Transformer**: Transform requests for different LLM providers
+- **Multi-Provider Support**: OpenAI, Anthropic, Azure OpenAI, and more
+- **MCP Tool Aggregation**: Aggregate MCP tools from multiple sources
+
+### Security & Compliance
+
+| Feature | Description |
+|---------|-------------|
+| **SSO/SAML/OIDC** | Enterprise identity provider integration |
+| **Teams & Roles** | RBAC with custom teams and permissions |
+| **Audit Logging** | Comprehensive audit logs for Konnect and Dev Portal |
+| **CMEK** | Customer-Managed Encryption Keys |
+| **Data Localization** | Geo-specific data storage and processing |
+| **Multi-Geo Federation** | Federated API management across regions |
+
+### Management Tools
+
+| Tool | Use Case |
+|------|----------|
+| **decK** | Declarative configuration management via YAML/JSON |
+| **Terraform Provider** | Infrastructure as Code for Konnect resources |
+| **Kong Ingress Controller** | Kubernetes-native configuration via CRDs |
+| **Konnect APIs** | Full programmatic control over all Konnect features |
+| **KAi** | Kong's AI assistant for issue detection and fixes |
+
+---
 
 ## Cleanup
 
@@ -647,8 +903,12 @@ terraform destroy
 
 ## Resources
 
-- [Kong Gateway Documentation](https://docs.konghq.com/gateway/latest/)
-- [Kong Kubernetes Ingress Controller](https://docs.konghq.com/kubernetes-ingress-controller/latest/)
-- [Kong Konnect](https://docs.konghq.com/konnect/)
+- [Kong Gateway Documentation](https://developer.konghq.com/gateway/)
+- [Kong Kubernetes Ingress Controller](https://developer.konghq.com/kubernetes-ingress-controller/)
+- [Kong Konnect Platform](https://developer.konghq.com/konnect/)
+- [Kong AI Gateway](https://developer.konghq.com/ai-gateway/)
+- [Kong Developer Portal](https://developer.konghq.com/dev-portal/)
+- [Kong Identity](https://developer.konghq.com/kong-identity/)
+- [Konnect APIs Reference](https://developer.konghq.com/api/)
 - [Kubernetes Gateway API Documentation](https://gateway-api.sigs.k8s.io/)
 - [CloudFront VPC Origins](https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/private-content-vpc-origins.html)
