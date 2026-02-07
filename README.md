@@ -1044,17 +1044,40 @@ AWS WAF is attached to **CloudFront** — it filters traffic at the edge before 
 
 ## Cleanup
 
-```bash
-# Delete ArgoCD apps first
-kubectl delete -f argocd/apps/root-app.yaml
+### Automated Teardown (Recommended)
 
-# Wait for resources to be cleaned up
+Use the destroy script for a clean, fully-automated teardown that prevents orphaned NLBs/ENIs from blocking subnet deletion:
+
+```bash
+./scripts/destroy.sh
+```
+
+The script handles the correct destruction order:
+1. Deletes ArgoCD applications (cascade deletes all K8s resources via finalizers)
+2. Removes any remaining LoadBalancer services that create NLBs outside Terraform
+3. Cleans up K8s secrets and TargetGroupBindings
+4. Detects and offers to delete orphaned NLBs in the VPC
+5. Runs `terraform destroy`
+6. Removes local certificate artifacts
+
+### Manual Teardown
+
+If you prefer manual control, follow this order:
+
+```bash
+# 1. Delete ArgoCD apps (cascade deletes K8s resources)
+kubectl delete app kong-gateway-root -n argocd
 sleep 60
 
-# Destroy infrastructure
+# 2. Verify no LoadBalancer services remain (these create unmanaged NLBs)
+kubectl get svc --all-namespaces | grep LoadBalancer
+
+# 3. Destroy infrastructure
 cd terraform
 terraform destroy
 ```
+
+> **Note:** Terraform includes a pre-destroy provisioner that automatically cleans up K8s LoadBalancer services before destroying the EKS cluster. This acts as a safety net even if you skip step 1-2, but the automated script is more thorough.
 
 ## Related Projects
 

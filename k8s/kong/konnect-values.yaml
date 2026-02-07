@@ -41,17 +41,11 @@ ingressController:
     feature_gates: "GatewayAlpha=true"
 
 # Kong Gateway (Data Plane) configuration
+# IMPORTANT: Use ClusterIP — the NLB is Terraform-managed for CloudFront VPC Origin.
+# Using LoadBalancer here would create an UNMANAGED NLB that blocks subnet deletion on destroy.
 proxy:
   enabled: true
-  type: LoadBalancer
-
-  # AWS NLB annotations for internal load balancer
-  annotations:
-    service.beta.kubernetes.io/aws-load-balancer-type: "nlb"
-    service.beta.kubernetes.io/aws-load-balancer-scheme: "internal"
-    service.beta.kubernetes.io/aws-load-balancer-nlb-target-type: "ip"
-    service.beta.kubernetes.io/aws-load-balancer-healthcheck-path: "/healthz/ready"
-    service.beta.kubernetes.io/aws-load-balancer-healthcheck-protocol: "HTTP"
+  type: ClusterIP
 
   http:
     enabled: false

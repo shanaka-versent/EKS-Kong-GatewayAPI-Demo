@@ -236,6 +236,57 @@ resource "kubernetes_manifest" "target_group_binding" {
 }
 
 # ==============================================================================
+# PRE-DESTROY CLEANUP
+# Ensures K8s LoadBalancer services are deleted before EKS/VPC destruction.
+# Prevents orphaned NLBs/ENIs that block subnet deletion.
+# ==============================================================================
+
+resource "null_resource" "pre_destroy_k8s_cleanup" {
+  depends_on = [module.eks, module.lb_controller]
+
+  # Triggers ensure this resource is always "created" so the destroy provisioner runs
+  triggers = {
+    cluster_name = module.eks.cluster_name
+    region       = var.region
+  }
+
+  provisioner "local-exec" {
+    when    = destroy
+    command = <<-EOT
+      echo "=== Pre-destroy: Cleaning up K8s resources to prevent orphaned NLBs ==="
+
+      # Configure kubectl
+      aws eks update-kubeconfig --name ${self.triggers.cluster_name} --region ${self.triggers.region} 2>/dev/null || true
+
+      # Delete ArgoCD root app (cascade deletes all child apps and K8s resources)
+      kubectl delete app kong-gateway-root -n argocd --timeout=300s 2>/dev/null || true
+      echo "Waiting for ArgoCD cascade deletion..."
+      sleep 30
+
+      # Delete any remaining ArgoCD apps
+      kubectl delete app --all -n argocd --timeout=120s 2>/dev/null || true
+      sleep 10
+
+      # Delete all LoadBalancer services across all namespaces (prevents orphaned NLBs)
+      for svc in $(kubectl get svc --all-namespaces -o json 2>/dev/null | \
+        python3 -c "import sys,json; [print(f'{i[\"metadata\"][\"namespace\"]}/{i[\"metadata\"][\"name\"]}') for i in json.load(sys.stdin).get('items',[]) if i.get('spec',{}).get('type')=='LoadBalancer']" 2>/dev/null); do
+        ns="${svc%%/*}"
+        name="${svc##*/}"
+        echo "Deleting LoadBalancer service: $ns/$name"
+        kubectl delete svc "$name" -n "$ns" --timeout=60s 2>/dev/null || true
+      done
+
+      # Delete TargetGroupBindings
+      kubectl delete targetgroupbinding --all -n kong 2>/dev/null || true
+
+      echo "Waiting 30s for NLB deprovisioning..."
+      sleep 30
+      echo "=== Pre-destroy cleanup complete ==="
+    EOT
+  }
+}
+
+# ==============================================================================
 # ARGOCD - GITOPS CONTINUOUS DELIVERY
 # ==============================================================================
 
