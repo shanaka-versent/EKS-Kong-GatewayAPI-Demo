@@ -42,7 +42,7 @@ spec:
             feature_gates: "GatewayAlpha=true"
           konnect:
             enabled: true
-            controlPlaneID: "31c96ad8-651b-40b6-92e9-b9ab8dae1cdf"
+            runtimeGroupID: "31c96ad8-651b-40b6-92e9-b9ab8dae1cdf"
             apiHostname: "au.kic.api.konghq.com"
             tlsClientCertSecretName: "kong-cluster-cert"
             license:
