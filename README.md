@@ -221,7 +221,6 @@ sequenceDiagram
     participant CF as CloudFront + WAF
     participant NLB as Internal NLB
     participant Kong as Kong Gateway<br/>(kong namespace)
-    participant KIC as Kong Ingress Controller
     participant App as Backend Service
 
     Note over Client,CF: TLS Termination at Edge
