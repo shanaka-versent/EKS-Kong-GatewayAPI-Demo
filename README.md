@@ -69,29 +69,32 @@ flowchart TB
 
 ### Where Does the API Gateway Capability Sit?
 
-The key architectural decision across implementations is **where the API Gateway capability lives**:
+The Kubernetes Gateway API standard (GatewayClass, Gateway, HTTPRoute) handles **routing only** — it defines how traffic enters the cluster and reaches backend services. It does **not** provide API management capabilities like authentication, rate limiting, request transformation, or a developer portal.
+
+This means the architectural decision is: **where does API management live?**
 
 ```mermaid
 %%{init: {'theme': 'neutral'}}%%
 flowchart TB
-    subgraph Impl1["Implementation 1: Kong Gateway"]
+    subgraph Kong["Kong Gateway (This Repo)"]
         direction LR
-        A1["CDN + WAF"] --> B1["Internal LB"] --> C1["Kong Gateway"] --> D1["Backend Services"]
+        A1["CDN + WAF"] --> B1["Internal LB"] --> C1["Kong Gateway<br/>K8s Gateway API +<br/>API Management"] --> D1["Backend Services"]
     end
 
-    subgraph Impl2["Implementation 2: AWS API Gateway"]
+    subgraph Istio["Istio Gateway + Separate API Management"]
         direction LR
-        A2["CDN + WAF"] --> B2["AWS API GW"] --> C2["Internal LB"] --> D2["K8s Gateway API"] --> E2["Backend Services"]
+        A2["CDN + WAF"] --> B2["API Management<br/>(AWS API GW / Azure APIM / etc)"] --> C2["Internal LB"] --> D2["Istio Gateway<br/>K8s Gateway API<br/>(routing only)"] --> E2["Backend Services"]
     end
 ```
 
-| | Implementation 1: Kong | Implementation 2: AWS API GW |
-|---|---|---|
-| **API Gateway** | Kong Gateway (inside K8s) | AWS API Gateway (outside K8s) |
-| **K8s Routing** | Kong IS the Gateway API impl | Istio or Kong (routing only) |
-| **Traffic Split** | Single path for all traffic | Separate paths for Web vs API |
-| **API Management** | Kong Plugins (200+) | API GW features + Lambda Authorizer |
-| **Private Connectivity** | VPC Origin to NLB | VPC Link to NLB |
+**Kong Gateway** combines K8s Gateway API routing and API management in a single component — rate limiting, auth, transforms, and 200+ plugins are applied directly at the gateway.
+
+**Istio Gateway** implements K8s Gateway API for routing but does not include API management. To expose APIs with full management capabilities (rate limiting, API keys, OAuth, usage plans, developer portal), you need a **separate API management layer** such as:
+- **AWS API Gateway** (with VPC Link)
+- **Azure API Management (APIM)**
+- **Apigee**, **Tyk**, or any other API management platform
+
+This adds an extra component to the architecture, separate traffic paths (API vs web), and additional operational overhead.
 
 ---
 
@@ -177,39 +180,69 @@ Client --> CloudFront + WAF --> VPC Origin --> Internal NLB --> Kong Gateway -->
 
 ## End-to-End Traffic Flow
 
-The architecture implements **TLS termination at the CloudFront edge** with fully private internal connectivity. All traffic from CloudFront to Kong Gateway travels over the AWS backbone via VPC Origin (PrivateLink) — no public endpoints are exposed.
+The architecture implements **TLS termination at the CloudFront edge** with fully private internal connectivity via VPC Origin (PrivateLink). No public endpoints are exposed inside the VPC.
 
 ```mermaid
 %%{init: {'theme': 'neutral'}}%%
 sequenceDiagram
     participant Client
-    participant CF as CloudFront<br/>(Edge + WAF)
-    participant VPC as VPC Origin<br/>(PrivateLink)
-    participant NLB as Internal NLB<br/>(Private Subnet)
-    participant Kong as Kong Gateway<br/>(Pod)
-    participant Plugin as Kong Plugins<br/>(Rate Limit, Auth)
-    participant App as Backend App<br/>(Pod)
+    participant CF as CloudFront + WAF
+    participant NLB as Internal NLB
+    participant Kong as Kong Gateway<br/>(kong namespace)
+    participant KIC as Kong Ingress Controller
+    participant App as Backend Service
 
-    Note over Client,CF: TLS Session (Edge)
-    Client->>+CF: HTTPS :443<br/>TLS with ACM Certificate
-    CF->>CF: TLS Termination<br/>+ WAF Inspection
+    Note over Client,CF: TLS Termination at Edge
+    Client->>+CF: HTTPS :443 (ACM Certificate)
+    CF->>CF: WAF Rules (SQLi, XSS, Rate Limit)
+    CF->>CF: TLS Termination
 
-    Note over CF,NLB: Private Backbone (No Public Endpoint)
-    CF->>+VPC: HTTP :80<br/>AWS Backbone
-    VPC->>+NLB: HTTP :80<br/>PrivateLink ENI
+    Note over CF,NLB: VPC Origin (AWS PrivateLink)
+    CF->>+NLB: HTTP :80 (AWS Backbone)
 
-    Note over NLB,App: Kubernetes Cluster (Private)
-    NLB->>+Kong: HTTP :8000<br/>TargetGroupBinding
-    Kong->>Plugin: Execute Plugin Chain
-    Plugin->>Plugin: Rate Limiting<br/>Request Transform<br/>CORS / Auth
-    Plugin->>Kong: Continue
-    Kong->>+App: HTTP :8080<br/>HTTPRoute Match
-    App-->>-Kong: Response
+    Note over NLB,App: EKS Cluster (Private Subnets)
+    NLB->>+Kong: HTTP :8000 (TargetGroupBinding)
+
+    alt /api/users - API Route (with plugins)
+        Kong->>Kong: rate-limiting (100/min per IP)
+        Kong->>Kong: request-transformer (add headers)
+        Kong->>Kong: cors (browser access)
+        Kong->>+App: HTTP :8080 → users-api (api namespace)
+        App-->>-Kong: JSON Response
+    else /app1 - Web Route (pass-through)
+        Kong->>+App: HTTP :8080 → sample-app-1 (tenant-app1 namespace)
+        App-->>-Kong: Response
+    else /app2 - Web Route (pass-through)
+        Kong->>+App: HTTP :8080 → sample-app-2 (tenant-app2 namespace)
+        App-->>-Kong: Response
+    else /healthz/* - Health Probe
+        Kong->>+App: HTTP :8080 → health-responder (gateway-health namespace)
+        App-->>-Kong: 200 OK
+    end
+
     Kong-->>-NLB: Response
-    NLB-->>-VPC: Response
-    VPC-->>-CF: Response
+    NLB-->>-CF: Response
     CF-->>-Client: HTTPS Response
+
+    Note over Kong,KIC: KIC watches Gateway API resources<br/>and configures Kong data plane
 ```
+
+### How It Maps to This Repo
+
+| Component | K8s Resource | File | Details |
+|-----------|-------------|------|---------|
+| **GatewayClass** | `kong` | `k8s/kong/gateway-class.yaml` | `controllerName: konghq.com/kic-gateway-controller` |
+| **Gateway** | `kong-gateway` | `k8s/kong/gateway.yaml` | Listener on port 80 (HTTP), namespace `kong`, `allowedRoutes: All` |
+| **HTTPRoute** | `users-api-route` | `k8s/apps/api/httproute.yaml` | `/api/users` → `users-api:8080` + plugins: rate-limiting, request-transformer, cors |
+| **HTTPRoute** | `app1-route` | `k8s/apps/tenant-app1/httproute.yaml` | `/app1` → `sample-app-1:8080` (no plugins — clean pass-through) |
+| **HTTPRoute** | `app2-route` | `k8s/apps/tenant-app2/httproute.yaml` | `/app2` → `sample-app-2:8080` (no plugins — clean pass-through) |
+| **HTTPRoute** | `health-route` | `k8s/gateway-health/httproute.yaml` | `/healthz` → `health-responder:8080` (NLB health probes) |
+| **KongPlugin** | `rate-limiting` | `k8s/apps/api/kong-plugins.yaml` | 100 req/min per IP, local policy |
+| **KongPlugin** | `request-transformer` | `k8s/apps/api/kong-plugins.yaml` | Adds `X-Request-ID`, `X-Forwarded-Proto`, `X-Kong-Proxy` headers |
+| **KongPlugin** | `cors` | `k8s/apps/api/kong-plugins.yaml` | All origins, standard methods, exposes rate-limit headers |
+| **ReferenceGrant** | Per namespace | Each `httproute.yaml` | Allows cross-namespace routing from app namespaces to `kong` Gateway |
+| **NLB** | Terraform-managed | `terraform/modules/nlb/` | Internal NLB with CloudFront prefix list SG; Kong pods registered via TargetGroupBinding |
+| **VPC Origin** | Terraform-managed | `terraform/modules/cloudfront/` | PrivateLink from CloudFront to Internal NLB — no public endpoints |
 
 ### Traffic Security Layers
 
@@ -217,24 +250,10 @@ sequenceDiagram
 |---------|----------|---------|
 | **Client → CloudFront** | TLS (ACM Certificate) | HTTPS terminated at edge; trusted public certificate via AWS Certificate Manager |
 | **CloudFront WAF** | AWS WAF Managed Rules | SQLi, XSS, bad inputs, rate limiting applied before traffic enters VPC |
-| **CloudFront → NLB** | VPC Origin (PrivateLink) | Traffic travels over AWS backbone — no internet exposure, no public NLB |
-| **NLB → Kong Gateway** | Private subnet + Security Group | NLB SG allows only CloudFront prefix list; Kong pods registered via TargetGroupBinding |
-| **Kong Gateway** | Kong Plugin Chain | Rate limiting, request transformation, CORS, authentication per-route |
-| **Kong → Backend** | Cluster-internal HTTP | HTTPRoute-based routing to backend services on port 8080 |
-
-### Why VPC Origin (Not ALB)?
-
-This architecture uses **CloudFront VPC Origin** (launched Nov 2024) instead of the traditional ALB pattern:
-
-| Aspect | Traditional (ALB) | This Project (VPC Origin) |
-|--------|--------------------|---------------------------|
-| **Public endpoints** | ALB is publicly accessible | No public endpoints at all |
-| **Connectivity** | Internet-routed to ALB | AWS backbone via PrivateLink |
-| **Security** | ALB SG + WAF | CloudFront prefix list SG only |
-| **Header verification** | Requires custom header checks | Not needed — PrivateLink is tamper-proof |
-| **Cost** | ALB + NLB | NLB only |
-
-> **Note:** Since all internal traffic is over private VPC networking (PrivateLink + private subnets), HTTP is used internally. For environments requiring encryption in transit within the VPC, Kong Gateway supports TLS listeners — add a `tls` listener to the Gateway resource and configure the corresponding certificate secret.
+| **CloudFront → NLB** | VPC Origin (PrivateLink) | Traffic over AWS backbone — no internet exposure, no public NLB |
+| **NLB → Kong Gateway** | Private subnet + SG | NLB SG allows only CloudFront prefix list; Kong pods registered via TargetGroupBinding |
+| **Kong Gateway** | Kong Plugin Chain | Rate limiting, request transformation, CORS — applied per-route via annotations |
+| **Kong → Backend** | Cluster-internal HTTP | HTTPRoute + ReferenceGrant for cross-namespace routing to services on port 8080 |
 
 ---
 
@@ -278,117 +297,27 @@ flowchart LR
 
 ---
 
-## Implementation 2: Istio + AWS API Gateway
+## Why Kong Gateway Over Istio Gateway for API Management?
 
-AWS API Gateway handles API management as a managed service. Traffic is split — API requests go through API Gateway, web requests go directly to an ALB. Istio provides the K8s Gateway API implementation and service mesh (mTLS).
+Both Kong and Istio implement the same Kubernetes Gateway API standard — the HTTPRoute resources are identical. The difference is what each brings beyond routing:
 
-```mermaid
-%%{init: {'theme': 'neutral'}}%%
-flowchart TB
-    Client["Client"]
+| Capability | Kong Gateway | Istio Gateway |
+|-----------|--------------|---------------|
+| **K8s Gateway API Routing** | Yes | Yes |
+| **Rate Limiting** | Built-in (KongPlugin) | Requires separate API management layer |
+| **Authentication (JWT, OAuth, OIDC)** | Built-in (KongPlugin) | Requires separate API management layer |
+| **Request/Response Transforms** | Built-in (KongPlugin) | Requires separate API management layer |
+| **API Key Management** | Built-in (KongPlugin) | Requires separate API management layer |
+| **Developer Portal** | Kong Konnect (SaaS) | Requires separate API management layer |
+| **Analytics & Monitoring** | Kong Konnect (SaaS) | Requires separate API management layer |
+| **Plugin Ecosystem** | 200+ plugins | N/A |
+| **Service Mesh (East-West mTLS)** | Requires Kong Mesh (separate) | Built-in (Ambient or Sidecar) |
 
-    subgraph Edge["CloudFront Edge"]
-        direction LR
-        CF["CloudFront"]
-        WAF["AWS WAF"]
-    end
+Since Istio Gateway only provides ingress routing, teams that need to expose APIs with full management capabilities must add a **separate API management layer** — such as AWS API Gateway, Azure APIM, Apigee, or Tyk. This introduces additional components, split traffic paths, and operational overhead.
 
-    subgraph AWS["AWS Cloud"]
-        subgraph APIPath["API Traffic Path"]
-            direction LR
-            APIGW["AWS API Gateway"]
-            Lambda["Lambda Authorizer"]
-            VPCLink["VPC Link"]
-        end
+Kong Gateway eliminates this by combining K8s Gateway API routing and API management in a single component.
 
-        subgraph WebPath["Web Traffic Path"]
-            ALB["ALB"]
-        end
-
-        subgraph VPC["VPC — Private Subnets"]
-            NLB2["Internal NLB"]
-
-            subgraph EKS2["EKS Cluster"]
-                direction LR
-                IstioGW["Istio Gateway"]
-                HR2["HTTPRoutes"]
-                Apps2["Backend Services"]
-            end
-        end
-
-        subgraph S3Path["Static Assets"]
-            S3["S3 + OAC"]
-        end
-    end
-
-    Client --> CF
-    CF --> WAF
-
-    WAF --> APIGW
-    APIGW --> Lambda
-    APIGW --> VPCLink
-    VPCLink --> NLB2
-
-    WAF --> ALB
-    ALB --> NLB2
-
-    WAF --> S3
-
-    NLB2 --> IstioGW
-    IstioGW --> HR2
-    HR2 --> Apps2
-```
-
-**Traffic Flows:**
-```
-API:    Client --> CloudFront + WAF --> AWS API Gateway --> VPC Link --> Internal NLB --> Istio Gateway --> Backend
-Web:    Client --> CloudFront + WAF --> ALB --> Internal NLB --> Istio Gateway --> Backend
-Static: Client --> CloudFront + WAF --> S3 (OAC)
-```
-
-**Why this pattern:**
-- AWS API Gateway provides managed API features (throttling, API keys, usage plans, Lambda authorizers)
-- Istio adds service mesh capabilities (mTLS, internal traffic policies, observability)
-- Separate paths allow different caching and security policies per traffic type
-- Best for teams already invested in AWS managed services
-
----
-
-## Comparison: Implementation Trade-offs
-
-| Aspect | Kong Gateway (Impl 1) | AWS API GW + Istio (Impl 2) |
-|--------|----------------------|------------------------------|
-| **API Gateway** | Kong (in-cluster) | AWS API Gateway (managed) |
-| **K8s Gateway API** | Kong GatewayClass | Istio GatewayClass |
-| **Service Mesh** | None (add Kong Mesh if needed) | Istio Ambient (mTLS, ztunnel) |
-| **Traffic Paths** | Single (all through Kong) | Split (API vs Web vs Static) |
-| **Private Connectivity** | VPC Origin (fully private) | VPC Link + ALB (ALB is public) |
-| **Bypass Protection** | Impossible (no public LB) | Header validation (Lambda) |
-| **Plugin Ecosystem** | 200+ Kong plugins | AWS-managed features |
-| **Developer Portal** | Kong Konnect (SaaS) | Not built-in |
-| **Operational Overhead** | Lower (single gateway) | Higher (API GW + ALB + Istio) |
-| **Cost Model** | Kong license + compute | AWS API GW per-request pricing |
-| **East-West Security** | None by default | Istio mTLS (built-in) |
-
----
-
-## Kong Gateway vs Istio: When to Use Which?
-
-| Aspect | Kong Gateway | Istio |
-|--------|--------------|-------|
-| **Primary Focus** | API Gateway (North-South) | Service Mesh (East-West + North-South) |
-| **Architecture** | Edge proxy only | Sidecar or Ambient mesh |
-| **API Management** | Built-in (auth, rate limiting, portal) | Limited |
-| **Service-to-Service mTLS** | Requires Kong Mesh | Built-in |
-| **Operational Complexity** | Lower | Higher |
-| **Resource Overhead** | Lower (edge only) | Higher (sidecars/ztunnel) |
-| **Best For** | API-first, external consumers | Microservices security, observability |
-
-**Choose Kong Gateway when:** You need strong API management at the edge, have external API consumers, want simpler operations, or don't need service mesh features.
-
-**Choose Istio when:** You need service-to-service mTLS, internal traffic policies, or full mesh observability.
-
-**You can use both together:** Kong at the edge for API management, Istio Ambient internally for service mesh.
+> **Note:** API management (north-south) and service mesh (east-west) are complementary concerns. You can use Kong Gateway at the edge for API management and Istio Ambient internally for service-to-service mTLS — they work together.
 
 ---
 
