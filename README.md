@@ -339,10 +339,17 @@ flowchart TB
         ArgoCD["ArgoCD"]
     end
 
+    subgraph L3Pre["Layer 3 Pre-config: Konnect Setup"]
+        direction LR
+        NS["kong Namespace"]
+        TLS["konnect-client-tls Secret"]
+        HelmVals["Helm Values (Konnect endpoints)"]
+    end
+
     subgraph L3["Layer 3: Gateway"]
         direction LR
         CRDs["Gateway API CRDs"]
-        KongGW["Kong Gateway"]
+        KongGW["Kong Gateway Enterprise"]
         GW["Gateway Resource"]
         KPlugins["Kong Plugins"]
     end
@@ -356,7 +363,8 @@ flowchart TB
     end
 
     L1 -->|"Terraform"| L2
-    L2 -->|"Terraform + ArgoCD"| L3
+    L2 -->|"kubectl + Konnect API"| L3Pre
+    L3Pre -->|"ArgoCD"| L3
     L3 -->|"ArgoCD"| L4
 ```
 
@@ -364,7 +372,8 @@ flowchart TB
 |-------|------|-----------------|
 | **Layer 1** | Terraform | VPC, Subnets (Public/Private), NAT/IGW, Route Tables |
 | **Layer 2** | Terraform | EKS, Node Groups, IAM (IRSA), LB Controller, Internal NLB, CloudFront + WAF + VPC Origin, ArgoCD |
-| **Layer 3** | ArgoCD | Gateway API CRDs, Kong Gateway (ClusterIP), Gateway, HTTPRoutes, Kong Plugins |
+| **Layer 3 Pre-config** | kubectl + Konnect API | kong namespace, konnect-client-tls secret, Helm values with Konnect endpoints |
+| **Layer 3** | ArgoCD | Gateway API CRDs, Kong Gateway Enterprise (ClusterIP), Gateway, HTTPRoutes, Kong Plugins |
 | **Layer 4** | ArgoCD | Applications (app1, app2, users-api, health-responder) |
 
 ---
@@ -557,6 +566,15 @@ Kong Gateway comes in two editions. This project defaults to Enterprise via Konn
 
 ## Deployment Steps
 
+```mermaid
+flowchart LR
+    S1["Step 1\nClone"] --> S2["Step 2\nTerraform\n(Layers 1 & 2)"]
+    S2 --> S3["Step 3\nkubeconfig"]
+    S3 --> S4["Step 4\nKonnect Setup\n(Layer 3 Pre-config)"]
+    S4 --> S5["Step 5\nArgoCD Deploy\n(Layers 3 & 4)"]
+    S5 --> S6["Step 6\nVerify"]
+```
+
 ### Step 1: Clone Repository
 
 ```bash
@@ -585,9 +603,14 @@ terraform apply -var="enable_cloudfront=true"
 $(terraform output -raw eks_get_credentials_command)
 ```
 
-### Step 4: Configure Kong Konnect Integration
+### Step 4: Configure Kong Konnect Integration (Layer 3 Pre-config)
 
-This step connects your Kong Gateway Enterprise data plane to Konnect. Konnect automatically provisions the Enterprise license — no license file management required.
+This step **must be completed before Step 5** (ArgoCD deployment). ArgoCD will deploy Kong Gateway Enterprise in Layer 3, and the Enterprise pods require:
+- The `kong` namespace and `konnect-client-tls` secret to exist
+- Helm values configured with the Konnect endpoints and Enterprise image
+- The mTLS certificate registered with your Konnect Control Plane
+
+Konnect automatically provisions the Enterprise license — no license file management required.
 
 > **Don't have a Konnect account?** See the [OSS alternative](#alternative-kong-gateway-oss-without-konnect) to deploy without Konnect.
 
@@ -675,18 +698,26 @@ This step connects your Kong Gateway Enterprise data plane to Konnect. Konnect a
 | `cluster_cert` | Path to client certificate | `/etc/secrets/konnect-client-tls/tls.crt` |
 | `cluster_cert_key` | Path to client private key | `/etc/secrets/konnect-client-tls/tls.key` |
 
-### Step 5: Deploy ArgoCD Root App (Layers 3 & 4)
+### Step 5: Deploy Kong Gateway & Applications via ArgoCD (Layers 3 & 4)
+
+ArgoCD now deploys Kong Gateway Enterprise (Layer 3) using the Konnect configuration from Step 4, followed by the application workloads (Layer 4).
 
 ```bash
 # Get ArgoCD admin password
 terraform output -raw argocd_admin_password
 
-# Apply root application
+# Apply root application — this triggers Layer 3 (Kong Gateway) and Layer 4 (Apps)
 kubectl apply -f argocd/apps/root-app.yaml
 
 # Wait for all apps to sync
 kubectl get applications -n argocd -w
 ```
+
+> **What ArgoCD deploys in order:**
+> 1. Gateway API CRDs
+> 2. Kong Gateway Enterprise (using `konnect-values.yaml` with the Enterprise image and Konnect config)
+> 3. GatewayClass + Gateway resources
+> 4. Application workloads (app1, app2, users-api, health-responder) with HTTPRoutes
 
 ### Step 6: Verify Deployment
 
@@ -933,7 +964,7 @@ If you don't have a Kong Konnect subscription and don't need Enterprise features
 
 ### OSS Deployment Steps
 
-**Skip Step 4** (Konnect Integration) and make these changes:
+**Skip Step 4** entirely (no Layer 3 pre-config needed) and make these changes:
 
 1. **Use the OSS Helm values** (`k8s/kong/values.yaml` instead of `konnect-values.yaml`):
    ```yaml
@@ -951,9 +982,9 @@ If you don't have a Kong Konnect subscription and don't need Enterprise features
        # No konnect_mode, cluster_*, or role settings needed
    ```
 
-2. **Update the ArgoCD app** to reference `values.yaml` instead of `konnect-values.yaml`
+2. **Update the ArgoCD app** (`argocd/apps/02-kong-gateway.yaml`) to reference `values.yaml` instead of `konnect-values.yaml`
 
-3. **Deploy as normal** (Steps 1-3, then Step 5-6), skipping the Konnect verification
+3. **Deploy Steps 1-3, then Step 5-6 directly** — ArgoCD will deploy Kong Gateway OSS without Konnect. No namespace or secret pre-creation needed since the OSS image doesn't require Konnect credentials
 
 > **Note:** The Gateway API resources (GatewayClass, Gateway, HTTPRoute) work identically with both editions. Only the available plugin set and management capabilities differ.
 
