@@ -565,9 +565,11 @@ flowchart TB
 2. **Create a Control Plane**
    
    Using the Konnect UI:
-   - Navigate to **Gateway Manager** → **New Control Plane**
-   - Select **Kong Ingress Controller** for Kubernetes Gateway API deployments
-   - Or select **Self-Managed Hybrid** for standard Kong Gateway deployments
+   - In the left sidebar, click **API Gateway**
+   - Click **+ New Control Plane**
+   - Select **Kong Ingress Controller** (this provides Kubernetes Gateway API support)
+   
+   > **Note:** "Kong Ingress Controller" in Konnect is the correct choice for Kubernetes Gateway API deployments. KIC is the controller that watches Gateway/HTTPRoute CRDs and configures Kong Gateway data planes. Your Kong Gateway pods act as the data plane, while KIC manages the Gateway API resources.
 
    Or using the API:
    ```bash
@@ -575,7 +577,8 @@ flowchart TB
    export KONNECT_TOKEN='your-pat-token'
    export KONNECT_REGION='us'  # Options: us, eu, au, me, in, sg
 
-   # Create a KIC Control Plane
+   # Create a Control Plane for Kubernetes Gateway API deployments
+   # Note: CLUSTER_TYPE_K8S_INGRESS_CONTROLLER enables Gateway API support
    CONTROL_PLANE_DETAILS=$(curl -X POST "https://${KONNECT_REGION}.api.konghq.com/v2/control-planes" \
      -H "Authorization: Bearer $KONNECT_TOKEN" \
      --json '{
@@ -680,9 +683,11 @@ kubectl get applications -n argocd -w
 ### Step 6: Verify Konnect Connection
 
 1. **Check Data Plane Status in Konnect UI**
-   - Go to Kong Konnect dashboard
-   - Navigate to **Gateway Manager** → Your Control Plane
-   - You should see your data plane node(s) connected with status "Connected"
+   - Go to Kong Konnect dashboard at [cloud.konghq.com](https://cloud.konghq.com)
+   - In the left sidebar, click **API Gateway**
+   - Click on your Control Plane to open the Overview dashboard
+   - Click **Data Plane Nodes** in the sidebar to see connected nodes
+   - Your data plane node(s) should show status "Connected"
    
 2. **Verify from Kubernetes**
    ```bash
