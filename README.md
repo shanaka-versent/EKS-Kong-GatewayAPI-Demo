@@ -22,7 +22,7 @@ In short: **Istio Gateway** gives you K8s Gateway API routing. **Kong Gateway** 
 
 There are two architectural options for using Kong as an API management layer. This POC implements **Option 1**. The [Appendix](#appendix-kong-as-an-external-api-management-layer) covers Option 2 in detail.
 
-#### Option 1: Kong on K8s — Ingress + API Management (This Repo)
+#### Option 1: Kong on K8s — Ingress (K8s Gateway API) + API Management (This Repo)
 
 Kong is deployed **inside the EKS cluster** as a single component that serves as both the K8s Gateway API implementation and the API management layer — handling ingress routing, authentication, rate limiting, and all API policies in one place.
 
