@@ -21,6 +21,7 @@ This is particularly relevant for teams who:
 All implementations in this series follow a common reference architecture. The pattern is **cloud-agnostic** and applies to both AWS (CloudFront) and Azure (Front Door).
 
 ```mermaid
+%%{init: {'theme': 'neutral'}}%%
 flowchart TB
     Client["Client"]
 
@@ -33,10 +34,11 @@ flowchart TB
     end
 
     subgraph Cloud["Cloud VPC / VNet — Private Subnets"]
-        ILB["Internal Load Balancer (L4)"]
+        ILB["Internal Load Balancer"]
 
         subgraph K8s["Kubernetes Cluster"]
-            APIGW["API Gateway Capability"]
+            direction LR
+            APIGW["API Gateway"]
             GW["K8s Gateway API"]
             SVC["Backend Services"]
         end
@@ -66,24 +68,16 @@ flowchart TB
 The key architectural decision across implementations is **where the API Gateway capability lives**:
 
 ```mermaid
-flowchart LR
+%%{init: {'theme': 'neutral'}}%%
+flowchart TB
     subgraph Impl1["Implementation 1: Kong Gateway"]
-        direction TB
-        A1["CDN + WAF"]
-        B1["Internal LB"]
-        C1["Kong Gateway\n(API GW + K8s GW API)"]
-        D1["Backend Services"]
-        A1 --> B1 --> C1 --> D1
+        direction LR
+        A1["CDN + WAF"] --> B1["Internal LB"] --> C1["Kong Gateway"] --> D1["Backend Services"]
     end
 
     subgraph Impl2["Implementation 2: AWS API Gateway"]
-        direction TB
-        A2["CDN + WAF"]
-        B2["AWS API Gateway\n(API GW capability)"]
-        C2["Internal LB"]
-        D2["K8s Gateway API\n(Istio/Kong)"]
-        E2["Backend Services"]
-        A2 --> B2 --> C2 --> D2 --> E2
+        direction LR
+        A2["CDN + WAF"] --> B2["AWS API GW"] --> C2["Internal LB"] --> D2["K8s Gateway API"] --> E2["Backend Services"]
     end
 ```
 
@@ -102,27 +96,31 @@ flowchart LR
 Kong Gateway serves as BOTH the API Gateway and the Kubernetes Gateway API implementation. All traffic (web + API) flows through a single path.
 
 ```mermaid
+%%{init: {'theme': 'neutral'}}%%
 flowchart TB
     Client["Client"]
 
     subgraph Edge["CloudFront Edge"]
+        direction LR
         CF["CloudFront"]
-        WAF["AWS WAF\n(CommonRuleSet, SQLi,\nKnownBadInputs, Rate Limit)"]
+        WAF["AWS WAF"]
     end
 
     subgraph VPC["AWS VPC — Private Subnets Only"]
-        VPCOrigin["VPC Origin\n(AWS Backbone)"]
-        NLB["Internal NLB\n(Terraform-managed)"]
+        VPCOrigin["VPC Origin"]
+        NLB["Internal NLB"]
 
         subgraph EKS["EKS Cluster"]
             TGB["TargetGroupBinding"]
 
             subgraph KongNS["Kong Gateway"]
-                Kong["Kong Pods\n(ClusterIP)"]
-                Plugins["Plugins:\nRate Limit | JWT Auth\nCORS | Transforms"]
+                direction LR
+                Kong["Kong Pods"]
+                Plugins["Kong Plugins"]
             end
 
             subgraph Routes["HTTPRoutes"]
+                direction LR
                 R1["/app1"]
                 R2["/app2"]
                 R3["/api/*"]
@@ -130,6 +128,7 @@ flowchart TB
             end
 
             subgraph Apps["Backend Services"]
+                direction LR
                 App1["sample-app-1"]
                 App2["sample-app-2"]
                 API["users-api"]
@@ -138,7 +137,8 @@ flowchart TB
         end
     end
 
-    subgraph Konnect["Kong Konnect (SaaS)"]
+    subgraph Konnect["Kong Konnect SaaS"]
+        direction LR
         Analytics["Analytics"]
         Portal["Dev Portal"]
     end
@@ -150,12 +150,12 @@ flowchart TB
     NLB --> TGB
     TGB --> Kong
     Kong --> Plugins
-    Plugins --> Routes
+    Plugins --> R1 & R2 & R3 & R4
     R1 --> App1
     R2 --> App2
     R3 --> API
     R4 --> Health
-    Kong -..-> Konnect
+    Kong -.-> Konnect
 ```
 
 **Traffic Flow:**
@@ -182,17 +182,19 @@ Kong Gateway implements the Kubernetes Gateway API **exactly like Istio does**. 
 | **GatewayClass controllerName** | `gateway.istio.io/gateway-controller` | `konghq.com/kic-gateway-controller` |
 
 ```mermaid
+%%{init: {'theme': 'neutral'}}%%
 flowchart LR
-    subgraph "Kong Gateway API Implementation"
-        KIC["Kong Ingress Controller\n(watches Gateway API CRDs)"]
-        KG["Kong Gateway Pods\n(data plane - processes traffic)"]
+    subgraph KongImpl["Kong Gateway API Implementation"]
+        direction LR
+        KIC["Kong Ingress Controller"]
+        KG["Kong Gateway Pods"]
     end
-    
-    GC["GatewayClass\n(kong)"]
-    GW["Gateway\n(kong-gateway)"]
-    HR["HTTPRoute\n(/app1, /app2, /api/*)"]
+
+    GC["GatewayClass"]
+    GW["Gateway"]
+    HR["HTTPRoute"]
     SVC["Backend Services"]
-    
+
     GC --> KIC
     GW --> KIC
     HR --> KIC
@@ -214,37 +216,41 @@ flowchart LR
 AWS API Gateway handles API management as a managed service. Traffic is split — API requests go through API Gateway, web requests go directly to an ALB. Istio provides the K8s Gateway API implementation and service mesh (mTLS).
 
 ```mermaid
+%%{init: {'theme': 'neutral'}}%%
 flowchart TB
     Client["Client"]
 
     subgraph Edge["CloudFront Edge"]
+        direction LR
         CF["CloudFront"]
         WAF["AWS WAF"]
     end
 
     subgraph AWS["AWS Cloud"]
-        subgraph APIPath["API Traffic Path (/api/*)"]
-            APIGW["AWS API Gateway\n(HTTP API v2)"]
-            Lambda["Lambda Authorizer\n(header validation)"]
-            VPCLink["VPC Link\n(Private)"]
+        subgraph APIPath["API Traffic Path"]
+            direction LR
+            APIGW["AWS API Gateway"]
+            Lambda["Lambda Authorizer"]
+            VPCLink["VPC Link"]
         end
 
-        subgraph WebPath["Web Traffic Path (/*default)"]
-            ALB["ALB\n(Public Subnets)"]
+        subgraph WebPath["Web Traffic Path"]
+            ALB["ALB"]
         end
 
         subgraph VPC["VPC — Private Subnets"]
             NLB2["Internal NLB"]
 
             subgraph EKS2["EKS Cluster"]
-                IstioGW["Istio Gateway\n(K8s Gateway API)"]
+                direction LR
+                IstioGW["Istio Gateway"]
                 HR2["HTTPRoutes"]
                 Apps2["Backend Services"]
             end
         end
 
-        subgraph S3Path["Static Assets (/static/*)"]
-            S3["S3 Bucket + OAC"]
+        subgraph S3Path["Static Assets"]
+            S3["S3 + OAC"]
         end
     end
 
@@ -322,6 +328,7 @@ Static: Client --> CloudFront + WAF --> S3 (OAC)
 ## Architecture Layers
 
 ```mermaid
+%%{init: {'theme': 'neutral'}}%%
 flowchart TB
     subgraph L1["Layer 1: Cloud Foundation"]
         direction LR
@@ -333,7 +340,7 @@ flowchart TB
     subgraph L2["Layer 2: Platform + Edge"]
         direction LR
         EKS["EKS Cluster"]
-        IAM["IAM (IRSA)"]
+        IAM["IAM / IRSA"]
         NLB["Internal NLB"]
         CF["CloudFront + WAF"]
         ArgoCD["ArgoCD"]
@@ -343,7 +350,7 @@ flowchart TB
         direction LR
         NS["kong Namespace"]
         TLS["konnect-client-tls Secret"]
-        HelmVals["Helm Values (Konnect endpoints)"]
+        HelmVals["Helm Values"]
     end
 
     subgraph L3["Layer 3: Gateway"]
@@ -381,6 +388,7 @@ flowchart TB
 ## EKS Cluster Architecture
 
 ```mermaid
+%%{init: {'theme': 'neutral'}}%%
 flowchart TB
     subgraph Edge["CloudFront Edge"]
         CF["CloudFront + WAF"]
@@ -397,12 +405,14 @@ flowchart TB
 
             subgraph EKS["EKS Cluster"]
                 subgraph SysNodes["System Node Pool"]
+                    direction LR
                     ArgoCD["ArgoCD"]
                     Kong["Kong Gateway"]
                     LBC["LB Controller"]
                 end
 
                 subgraph UserNodes["User Node Pool"]
+                    direction LR
                     App1["App 1"]
                     App2["App 2"]
                     API["Users API"]
@@ -432,21 +442,22 @@ flowchart TB
 Security is applied at every layer. WAF handles infrastructure threats at the edge, Kong plugins handle application/API concerns inside the cluster.
 
 ```mermaid
+%%{init: {'theme': 'neutral'}}%%
 flowchart LR
     subgraph L1["Layer 1: Edge"]
-        WAF["WAF\nDDoS, SQLi, XSS\nRate Limit, Geo-block"]
+        WAF["WAF"]
     end
 
     subgraph L2["Layer 2: Network"]
-        NLB["Internal NLB\nNo public IP\nSG: CloudFront only"]
+        NLB["Internal NLB"]
     end
 
     subgraph L3["Layer 3: Application"]
-        Kong["Kong Plugins\nJWT Auth, Rate Limit\nCORS, Transforms"]
+        Kong["Kong Plugins"]
     end
 
     subgraph L4["Layer 4: Workload"]
-        Pod["Pod Security\nResource Limits\nNamespace Isolation"]
+        Pod["Pod Security"]
     end
 
     L1 --> L2 --> L3 --> L4
@@ -464,18 +475,20 @@ flowchart LR
 ## Kong Plugin Chain
 
 ```mermaid
+%%{init: {'theme': 'neutral'}}%%
 flowchart LR
     Req["Request"]
 
     subgraph Kong["Kong Gateway"]
-        Route["Route\nMatching"]
+        direction LR
+        Route["Route Match"]
         Auth["JWT Auth"]
-        Rate["Rate\nLimit"]
-        Transform["Request\nTransform"]
+        Rate["Rate Limit"]
+        Transform["Transform"]
         Proxy["Proxy"]
     end
 
-    Backend["Backend\nService"]
+    Backend["Backend Service"]
 
     Req --> Route --> Auth --> Rate --> Transform --> Proxy --> Backend
 ```
@@ -524,13 +537,14 @@ plugin: cors
 NLB health probes target Kong's status endpoint directly. Application health checks route through Kong to the health-responder service:
 
 ```mermaid
+%%{init: {'theme': 'neutral'}}%%
 flowchart LR
     NLB["Internal NLB"]
     Kong["Kong Gateway"]
-    HR["HTTPRoute\n/healthz/*"]
+    HR["HTTPRoute /healthz/*"]
     Health["health-responder"]
 
-    NLB -->|"TCP :8100\n/healthz/ready"| Kong
+    NLB -->|"/healthz/ready"| Kong
     Kong --> HR --> Health
     Health -->|"200 OK"| NLB
 ```
@@ -567,12 +581,13 @@ Kong Gateway comes in two editions. This project defaults to Enterprise via Konn
 ## Deployment Steps
 
 ```mermaid
+%%{init: {'theme': 'neutral'}}%%
 flowchart LR
-    S1["Step 1\nClone"] --> S2["Step 2\nTerraform\n(Layers 1 & 2)"]
-    S2 --> S3["Step 3\nkubeconfig"]
-    S3 --> S4["Step 4\nKonnect Setup\n(Layer 3 Pre-config)"]
-    S4 --> S5["Step 5\nArgoCD Deploy\n(Layers 3 & 4)"]
-    S5 --> S6["Step 6\nVerify"]
+    S1["1. Clone"] --> S2["2. Terraform\n(L1 & L2)"]
+    S2 --> S3["3. kubeconfig"]
+    S3 --> S4["4. Konnect Setup\n(L3 Pre-config)"]
+    S4 --> S5["5. ArgoCD Deploy\n(L3 & L4)"]
+    S5 --> S6["6. Verify"]
 ```
 
 ### Step 1: Clone Repository
@@ -852,16 +867,17 @@ Centralized catalog of all services running in your organization.
 OAuth 2.0 and OpenID Connect identity provider for machine-to-machine authentication.
 
 ```mermaid
+%%{init: {'theme': 'neutral'}}%%
 sequenceDiagram
     participant Client as Client App
     participant Identity as Kong Identity
     participant Gateway as Kong Gateway
     participant API as Backend API
 
-    Client->>Identity: Request access token (client credentials)
+    Client->>Identity: Request access token
     Identity->>Identity: Validate credentials
-    Identity-->>Client: Access token + scope + expiry
-    Client->>Gateway: API request + access token
+    Identity-->>Client: Access token + expiry
+    Client->>Gateway: API request + token
     Gateway->>Identity: Validate token
     Identity-->>Gateway: Token valid
     Gateway->>API: Forward request
