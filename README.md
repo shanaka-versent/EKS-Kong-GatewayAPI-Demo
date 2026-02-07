@@ -336,9 +336,9 @@ flowchart TB
         EKS["EKS Cluster"] ~~~ IAM["IAM / IRSA"] ~~~ NLB["Internal NLB"] ~~~ CF["CloudFront + WAF"] ~~~ ArgoCD["ArgoCD"]
     end
 
-    subgraph L3Pre["Layer 3 Pre-config: Konnect Setup"]
+    subgraph L3Pre["Layer 3 Pre-config"]
         direction LR
-        NS["kong Namespace"] ~~~ TLS["konnect-client-tls Secret"] ~~~ HelmVals["Helm Values"]
+        NS["kong Namespace"] ~~~ TLS["TLS Secret"] ~~~ HelmVals["Helm Values"]
     end
 
     subgraph L3["Layer 3: Gateway"]
