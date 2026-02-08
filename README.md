@@ -1354,15 +1354,6 @@ You only need **two things** from the Konnect UI (one-time setup). Everything el
 | **Certificate Registration** | Konnect API (`POST .../dp-client-certificates`) | Step 3 |
 | **K8s Secret** (`kong-cluster-cert`) | `kubectl create secret tls` | Step 4 |
 
-#### What Gets Stored Where
-
-| Detail | Stored In | Committed to Git? |
-|--------|----------|-------------------|
-| PAT (`kpat_xxx...`) | Your password manager / vault | Never |
-| Control Plane ID | `argocd/apps/02b-kong-controller.yaml` (`runtimeGroupID`) | Yes |
-| KIC API Hostname | `argocd/apps/02b-kong-controller.yaml` (`apiHostname`) | Yes |
-| TLS Certificate + Key | K8s Secret `kong-cluster-cert` in `kong` namespace | Never |
-
 ### Architecture
 
 Kong is deployed as a **split deployment** — two separate Helm releases:
