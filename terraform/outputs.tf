@@ -82,3 +82,22 @@ output "application_url" {
   description = "Application URL (CloudFront if enabled, otherwise direct NLB)"
   value       = var.enable_cloudfront ? "https://${module.cloudfront[0].distribution_domain_name}" : "Use: kubectl get svc -n kong kong-kong-proxy"
 }
+
+# ==============================================================================
+# END-TO-END TLS OUTPUTS (Route53 + cert-manager IRSA)
+# ==============================================================================
+
+output "route53_zone_id" {
+  description = "Route53 hosted zone ID for cert-manager DNS-01 challenge"
+  value       = var.enable_cloudfront ? module.route53[0].zone_id : null
+}
+
+output "route53_name_servers" {
+  description = "Route53 name servers — create NS delegation record in parent account's Route53 zone"
+  value       = var.enable_cloudfront ? module.route53[0].name_servers : null
+}
+
+output "cert_manager_role_arn" {
+  description = "cert-manager IAM role ARN for IRSA (use in ArgoCD cert-manager app)"
+  value       = var.enable_cloudfront ? module.cert_manager_irsa[0].cert_manager_role_arn : null
+}

@@ -156,13 +156,15 @@ resource "aws_wafv2_web_acl" "main" {
 
 # VPC Origin enables private connectivity from CloudFront to Internal NLB
 # via AWS-managed ENIs in private subnets (uses PrivateLink under the hood)
+# End-to-End TLS: CloudFront connects via HTTPS to NLB, which passes through
+# to Kong pods on port 8443 where TLS is terminated with a Let's Encrypt cert
 resource "aws_cloudfront_vpc_origin" "nlb" {
   vpc_origin_endpoint_config {
-    name                   = "${var.name_prefix}-vpc-origin"
+    name                   = "${var.name_prefix}-vpc-origin-tls"
     arn                    = var.nlb_arn
     http_port              = 80
     https_port             = 443
-    origin_protocol_policy = "http-only"
+    origin_protocol_policy = "https-only"
 
     origin_ssl_protocols {
       items    = ["TLSv1.2"]
@@ -184,7 +186,7 @@ resource "aws_cloudfront_vpc_origin" "nlb" {
   }
 
   tags = merge(var.tags, {
-    Name   = "${var.name_prefix}-vpc-origin"
+    Name   = "${var.name_prefix}-vpc-origin-tls"
     Layer  = "Layer2-Infrastructure"
     Module = "cloudfront"
   })

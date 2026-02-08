@@ -1,0 +1,70 @@
+# ArgoCD App: cert-manager (Let's Encrypt DNS-01 Challenge)
+# @author Shanaka Jayasundera - shanakaj@gmail.com
+#
+# LAYER 3: K8s Customizations
+# Sync Wave: -1 (before Gateway API CRDs — cert-manager CRDs must be available first)
+#
+# Installs cert-manager with CRDs for automated TLS certificate management.
+# Uses IRSA to authenticate with Route53 for DNS-01 ACME challenge.
+#
+# After terraform apply, replace <CERT_MANAGER_ROLE_ARN> below with:
+#   terraform output cert_manager_role_arn
+
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: cert-manager
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "-1"
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+
+  source:
+    repoURL: https://charts.jetstack.io
+    chart: cert-manager
+    targetRevision: v1.17.1
+    helm:
+      values: |
+        # Install CRDs with the Helm chart
+        crds:
+          enabled: true
+
+        # IRSA: cert-manager service account assumes IAM role for Route53 access
+        serviceAccount:
+          annotations:
+            eks.amazonaws.com/role-arn: "<CERT_MANAGER_ROLE_ARN>"
+
+        # Tolerations for system nodes
+        tolerations:
+          - key: "CriticalAddonsOnly"
+            operator: "Exists"
+            effect: "NoSchedule"
+
+        # Webhook tolerations
+        webhook:
+          tolerations:
+            - key: "CriticalAddonsOnly"
+              operator: "Exists"
+              effect: "NoSchedule"
+
+        # CA Injector tolerations
+        cainjector:
+          tolerations:
+            - key: "CriticalAddonsOnly"
+              operator: "Exists"
+              effect: "NoSchedule"
+
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: cert-manager
+
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true

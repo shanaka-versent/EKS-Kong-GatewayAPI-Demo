@@ -1,0 +1,37 @@
+# ArgoCD App: cert-manager Configuration (ClusterIssuer + Certificate)
+# @author Shanaka Jayasundera - shanakaj@gmail.com
+#
+# LAYER 3: K8s Customizations
+# Sync Wave: 0 (after cert-manager CRDs are installed at wave -1)
+#
+# Deploys:
+# - ClusterIssuer resources for Let's Encrypt (staging + production)
+# - Certificate resource for kong.esharps.co.nz (stored as kong-gateway-tls secret)
+
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: cert-manager-config
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "0"
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+
+  source:
+    repoURL: https://github.com/shanaka-versent/EKS-Kong-GatewayAPI-Demo.git
+    targetRevision: HEAD
+    path: k8s/cert-manager
+
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: kong
+
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true

@@ -14,8 +14,8 @@
 # Kong Gateway pods are registered with this NLB via TargetGroupBinding CRD
 # (provided by AWS Load Balancer Controller).
 #
-# Traffic flow:
-# CloudFront --> VPC Origin (PrivateLink, AWS backbone) --> Internal NLB :80 (TCP) --> Kong Pods :8000 (HTTP)
+# Traffic flow (End-to-End TLS):
+# CloudFront --> VPC Origin (PrivateLink, HTTPS) --> Internal NLB :443 (TCP passthrough) --> Kong Pods :8443 (TLS, Let's Encrypt cert)
 
 # ==============================================================================
 # SECURITY GROUP
@@ -41,11 +41,11 @@ resource "aws_security_group" "nlb" {
   description = "Security group for Internal NLB - allows traffic from CloudFront VPC Origin"
   vpc_id      = var.vpc_id
 
-  # Inbound: Allow HTTP from CloudFront VPC Origin managed SG
+  # Inbound: Allow HTTPS from CloudFront VPC Origin managed SG
   ingress {
-    description     = "HTTP from CloudFront VPC Origin"
-    from_port       = 80
-    to_port         = 80
+    description     = "HTTPS from CloudFront VPC Origin"
+    from_port       = 443
+    to_port         = 443
     protocol        = "tcp"
     security_groups = [data.aws_security_group.cloudfront_vpc_origin.id]
   }
@@ -104,7 +104,7 @@ resource "aws_lb" "internal" {
 
 resource "aws_lb_target_group" "kong" {
   name        = "tg-kong-${var.name_prefix}"
-  port        = 8000
+  port        = 8443
   protocol    = "TCP"
   vpc_id      = var.vpc_id
   target_type = "ip"
@@ -132,9 +132,9 @@ resource "aws_lb_target_group" "kong" {
 # LISTENER
 # ==============================================================================
 
-resource "aws_lb_listener" "http" {
+resource "aws_lb_listener" "https" {
   load_balancer_arn = aws_lb.internal.arn
-  port              = 80
+  port              = 443
   protocol          = "TCP"
 
   default_action {

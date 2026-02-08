@@ -117,8 +117,30 @@ resource "time_sleep" "wait_for_lb_controller" {
 
 # ==============================================================================
 # CLOUDFRONT EDGE LAYER (optional - gated behind enable_cloudfront)
-# Creates: Internal NLB + CloudFront VPC Origin + WAF
+# Creates: Internal NLB + CloudFront VPC Origin + WAF + Route53 + cert-manager IRSA
 # ==============================================================================
+
+# Route53 Subdomain Hosted Zone for Let's Encrypt DNS-01 challenge
+# After apply, create NS delegation in parent account: terraform output route53_name_servers
+module "route53" {
+  count  = var.enable_cloudfront ? 1 : 0
+  source = "./modules/route53"
+
+  domain_name = var.domain_name
+  tags        = var.tags
+}
+
+# cert-manager IRSA role for Route53 DNS-01 challenge (Let's Encrypt)
+module "cert_manager_irsa" {
+  count  = var.enable_cloudfront ? 1 : 0
+  source = "./modules/cert-manager-irsa"
+
+  name_prefix       = local.name_prefix
+  oidc_provider_arn = module.eks.oidc_provider_arn
+  oidc_provider_url = module.eks.oidc_provider_url
+  route53_zone_id   = module.route53[0].zone_id
+  tags              = var.tags
+}
 
 # Internal NLB for Kong Gateway (Terraform-managed for CloudFront VPC Origin)
 # The NLB is internal with security groups allowing only CloudFront VPC Origin traffic
@@ -205,7 +227,7 @@ resource "kubernetes_manifest" "target_group_binding" {
       targetType     = "ip"
       serviceRef = {
         name = "kong-gateway-kong-proxy" # Kong Helm chart proxy service (release: kong-gateway)
-        port = 80
+        port = 443
       }
       networking = {
         ingress = [{
@@ -216,7 +238,7 @@ resource "kubernetes_manifest" "target_group_binding" {
           }]
           ports = [
             {
-              port     = 8000 # Kong proxy HTTP container port
+              port     = 8443 # Kong proxy TLS container port
               protocol = "TCP"
             },
             {

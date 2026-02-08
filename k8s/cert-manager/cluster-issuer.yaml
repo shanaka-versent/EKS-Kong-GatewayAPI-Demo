@@ -1,0 +1,51 @@
+# cert-manager ClusterIssuers for Let's Encrypt
+# @author Shanaka Jayasundera - shanakaj@gmail.com
+#
+# DNS-01 challenge via Route53 (IRSA authentication)
+#
+# After terraform apply, replace <ROUTE53_ZONE_ID> below with:
+#   terraform output route53_zone_id
+#
+# Two issuers provided:
+# - letsencrypt-staging: For testing (higher rate limits, untrusted certs)
+# - letsencrypt-production: For real certificates (trusted by CloudFront)
+
+---
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: letsencrypt-staging
+spec:
+  acme:
+    server: https://acme-staging-v02.api.letsencrypt.org/directory
+    email: shanakaj@gmail.com
+    privateKeySecretRef:
+      name: letsencrypt-staging-account-key
+    solvers:
+      - dns01:
+          route53:
+            region: ap-southeast-2
+            hostedZoneID: "<ROUTE53_ZONE_ID>"
+        selector:
+          dnsZones:
+            - "kong.esharps.co.nz"
+
+---
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: letsencrypt-production
+spec:
+  acme:
+    server: https://acme-v02.api.letsencrypt.org/directory
+    email: shanakaj@gmail.com
+    privateKeySecretRef:
+      name: letsencrypt-production-account-key
+    solvers:
+      - dns01:
+          route53:
+            region: ap-southeast-2
+            hostedZoneID: "<ROUTE53_ZONE_ID>"
+        selector:
+          dnsZones:
+            - "kong.esharps.co.nz"

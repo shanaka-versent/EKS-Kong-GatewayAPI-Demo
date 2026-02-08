@@ -1,0 +1,26 @@
+# cert-manager Certificate for Kong Gateway TLS
+# @author Shanaka Jayasundera - shanakaj@gmail.com
+#
+# Issues a Let's Encrypt certificate for kong.esharps.co.nz via DNS-01 challenge.
+# The certificate is stored in the 'kong-gateway-tls' secret — the same secret
+# referenced by the Kong Gateway resource (k8s/kong/gateway.yaml).
+#
+# cert-manager handles automatic renewal (30 days before 90-day expiry).
+#
+# End-to-End TLS Flow:
+#   Client --[TLS/ACM]--> CloudFront --[TLS/Let's Encrypt]--> NLB --> Kong :8443 --[HTTP]--> Pods
+
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: kong-gateway-tls
+  namespace: kong
+spec:
+  secretName: kong-gateway-tls
+  issuerRef:
+    name: letsencrypt-production
+    kind: ClusterIssuer
+  dnsNames:
+    - kong.esharps.co.nz
+  duration: 2160h    # 90 days
+  renewBefore: 720h  # Renew 30 days before expiry

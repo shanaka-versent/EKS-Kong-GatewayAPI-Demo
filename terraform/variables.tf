@@ -161,6 +161,16 @@ variable "cloudfront_custom_domain" {
   default     = ""
 }
 
+# ==============================================================================
+# END-TO-END TLS (Let's Encrypt via cert-manager)
+# ==============================================================================
+
+variable "domain_name" {
+  description = "Subdomain for Route53 hosted zone and Let's Encrypt certificate (e.g., kong.esharps.co.nz)"
+  type        = string
+  default     = "kong.esharps.co.nz"
+}
+
 # ArgoCD Configuration
 variable "argocd_version" {
   description = "ArgoCD Helm chart version"
