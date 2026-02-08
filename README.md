@@ -144,7 +144,7 @@ Kong is deployed **outside the EKS cluster** (on EC2/ECS or as a Kong Konnect De
 All implementations in this series follow a common reference architecture. The pattern is **cloud-agnostic** and applies to both AWS (CloudFront) and Azure (Front Door).
 
 ```mermaid
-%%{init: {'theme': 'neutral', 'themeVariables': {'primaryColor': '#ECECFF', 'primaryTextColor': '#333', 'primaryBorderColor': '#9370DB', 'lineColor': '#666', 'secondaryColor': '#ffffde', 'tertiaryColor': '#f4f4f4'}}}%%
+%%{init: {'theme': 'neutral'}}%%
 flowchart TB
     Client["Client"]
 
@@ -192,7 +192,7 @@ flowchart TB
 Kong Gateway serves as BOTH the API Gateway and the Kubernetes Gateway API implementation. All traffic (web + API) flows through a single path.
 
 ```mermaid
-%%{init: {'theme': 'neutral', 'themeVariables': {'primaryColor': '#ECECFF', 'primaryTextColor': '#333', 'primaryBorderColor': '#9370DB', 'lineColor': '#666', 'secondaryColor': '#ffffde', 'tertiaryColor': '#f4f4f4', 'fontSize': '16px'}, 'flowchart': {'nodeSpacing': 50, 'rankSpacing': 80, 'padding': 30}}}%%
+%%{init: {'theme': 'neutral', 'themeVariables': {'fontSize': '16px'}, 'flowchart': {'nodeSpacing': 50, 'rankSpacing': 80, 'padding': 30}}}%%
 flowchart TB
     Client["Client"]
 
@@ -291,13 +291,13 @@ flowchart TB
     KIC -.->|"config sync +<br/>telemetry (mTLS)"| ConfigSync
     KIC -.->|"node registration<br/>+ analytics"| Analytics
 
-    style EKS fill:#f4f4f4,stroke:#9370DB
-    style KongNS fill:#ffffff,stroke:#9370DB
-    style CertNS fill:#ffffff,stroke:#9370DB
-    style API fill:#ffffff,stroke:#9370DB
-    style TA1 fill:#ffffff,stroke:#9370DB
-    style TA2 fill:#ffffff,stroke:#9370DB
-    style GH fill:#ffffff,stroke:#9370DB
+    style EKS fill:#f0f0f0
+    style KongNS fill:#ffffff
+    style CertNS fill:#ffffff
+    style API fill:#ffffff
+    style TA1 fill:#ffffff
+    style TA2 fill:#ffffff
+    style GH fill:#ffffff
 ```
 
 **Traffic Flow (End-to-End Encryption):**
@@ -329,7 +329,6 @@ Client ──🔒 TLS 1──→ CloudFront (Decrypt 🔓 + WAF + Re-encrypt �
 The architecture implements **dual TLS termination** for end-to-end encryption, with fully private internal connectivity via VPC Origin (PrivateLink). No public endpoints are exposed inside the VPC.
 
 ```mermaid
-%%{init: {'theme': 'neutral', 'themeVariables': {'primaryColor': '#ECECFF', 'primaryTextColor': '#333', 'primaryBorderColor': '#9370DB', 'lineColor': '#666', 'secondaryColor': '#ffffde', 'tertiaryColor': '#f4f4f4'}}}%%
 sequenceDiagram
     participant Client
     participant CF as CloudFront + WAF
@@ -395,7 +394,7 @@ Kong Gateway implements the Kubernetes Gateway API **exactly like Istio does**. 
 | **GatewayClass controllerName** | `gateway.istio.io/gateway-controller` | `konghq.com/kic-gateway-controller` |
 
 ```mermaid
-%%{init: {'theme': 'neutral', 'themeVariables': {'primaryColor': '#ECECFF', 'primaryTextColor': '#333', 'primaryBorderColor': '#9370DB', 'lineColor': '#666', 'secondaryColor': '#ffffde', 'tertiaryColor': '#f4f4f4'}}}%%
+%%{init: {'theme': 'neutral'}}%%
 flowchart LR
     subgraph KongImpl["Kong Gateway API Implementation"]
         direction LR
@@ -429,7 +428,7 @@ flowchart LR
 ## Architecture Layers
 
 ```mermaid
-%%{init: {'theme': 'neutral', 'themeVariables': {'primaryColor': '#ECECFF', 'primaryTextColor': '#333', 'primaryBorderColor': '#9370DB', 'lineColor': '#666', 'secondaryColor': '#ffffde', 'tertiaryColor': '#f4f4f4'}}}%%
+%%{init: {'theme': 'neutral'}}%%
 flowchart TB
     subgraph L1["Layer 1: Cloud Foundation"]
         direction LR
@@ -477,7 +476,7 @@ flowchart TB
 Security is applied at every layer. WAF handles infrastructure threats at the edge, Kong plugins handle application/API concerns inside the cluster.
 
 ```mermaid
-%%{init: {'theme': 'neutral', 'themeVariables': {'primaryColor': '#ECECFF', 'primaryTextColor': '#333', 'primaryBorderColor': '#9370DB', 'lineColor': '#666', 'secondaryColor': '#ffffde', 'tertiaryColor': '#f4f4f4'}}}%%
+%%{init: {'theme': 'neutral'}}%%
 flowchart LR
     subgraph L1["Layer 1: Edge"]
         WAF["WAF"]
@@ -510,7 +509,7 @@ flowchart LR
 ## Kong Plugin Chain
 
 ```mermaid
-%%{init: {'theme': 'neutral', 'themeVariables': {'primaryColor': '#ECECFF', 'primaryTextColor': '#333', 'primaryBorderColor': '#9370DB', 'lineColor': '#666', 'secondaryColor': '#ffffde', 'tertiaryColor': '#f4f4f4'}}}%%
+%%{init: {'theme': 'neutral'}}%%
 flowchart LR
     Req["Request"]
 
@@ -574,7 +573,7 @@ plugin: cors
 NLB health probes target Kong's status endpoint directly. Application health checks route through Kong to the health-responder service:
 
 ```mermaid
-%%{init: {'theme': 'neutral', 'themeVariables': {'primaryColor': '#ECECFF', 'primaryTextColor': '#333', 'primaryBorderColor': '#9370DB', 'lineColor': '#666', 'secondaryColor': '#ffffde', 'tertiaryColor': '#f4f4f4'}}}%%
+%%{init: {'theme': 'neutral'}}%%
 flowchart LR
     NLB["Internal NLB"]
     Kong["Kong Gateway"]
@@ -600,7 +599,7 @@ flowchart LR
 ## Deployment Steps
 
 ```mermaid
-%%{init: {'theme': 'neutral', 'themeVariables': {'primaryColor': '#ECECFF', 'primaryTextColor': '#333', 'primaryBorderColor': '#9370DB', 'lineColor': '#666', 'secondaryColor': '#ffffde', 'tertiaryColor': '#f4f4f4'}}}%%
+%%{init: {'theme': 'neutral'}}%%
 flowchart LR
     S1["1. Clone +\nConfigure"] --> S2["2. Terraform\n(L1 & L2)"]
     S2 --> S3["3. Post-Terraform\nSetup (automated)"]
@@ -882,7 +881,7 @@ kubectl port-forward svc/argocd-server -n argocd 8080:443
 Kong Konnect is a unified API platform that provides centralized management for APIs, LLMs, events, and microservices. It combines a cloud-hosted control plane with flexible data plane deployment options. **This demo uses Self-Hosted data planes on EKS.**
 
 ```mermaid
-%%{init: {'theme': 'neutral', 'themeVariables': {'primaryColor': '#ECECFF', 'primaryTextColor': '#333', 'primaryBorderColor': '#9370DB', 'lineColor': '#666', 'secondaryColor': '#ffffde', 'tertiaryColor': '#f4f4f4', 'fontSize': '14px'}}}%%
+%%{init: {'theme': 'neutral', 'themeVariables': {'fontSize': '14px'}}}%%
 flowchart TB
     subgraph Konnect["Kong Konnect SaaS — Cloud Control Plane"]
         direction TB
@@ -918,12 +917,12 @@ flowchart TB
 
     Konnect -->|"Config Sync +<br/>Telemetry (mTLS)"| DataPlanes
 
-    style Konnect fill:#ECECFF,stroke:#9370DB,color:#333
-    style Core fill:#d8d8ff,stroke:#9370DB,color:#333
-    style Advanced fill:#d8d8ff,stroke:#9370DB,color:#333
-    style MgmtTools fill:#d8d8ff,stroke:#9370DB,color:#333
-    style DataPlanes fill:#f4f4f4,stroke:#9370DB,color:#333
-    style SelfHosted fill:#d8d8ff,stroke:#7B68AE,color:#333
+    style Konnect fill:#e8e8e8,stroke:#999,color:#333
+    style Core fill:#d9d9d9,stroke:#888,color:#333
+    style Advanced fill:#d9d9d9,stroke:#888,color:#333
+    style MgmtTools fill:#d9d9d9,stroke:#888,color:#333
+    style DataPlanes fill:#f0f0f0,stroke:#999,color:#333
+    style SelfHosted fill:#c8c8c8,stroke:#666,color:#333
 ```
 
 | Capability | Description |
@@ -961,7 +960,7 @@ flowchart TB
 This demo deploys Kong as a **split deployment** — the data plane (Kong Gateway) and KIC (controller) are **separate Helm releases**. Only the KIC controller connects to Konnect:
 
 ```mermaid
-%%{init: {'theme': 'neutral', 'themeVariables': {'primaryColor': '#ECECFF', 'primaryTextColor': '#333', 'primaryBorderColor': '#9370DB', 'lineColor': '#666', 'secondaryColor': '#ffffde', 'tertiaryColor': '#f4f4f4'}}}%%
+%%{init: {'theme': 'neutral'}}%%
 flowchart TB
     subgraph EKS["EKS Cluster (kong namespace)"]
         direction LR
@@ -983,10 +982,10 @@ flowchart TB
     KICBox -.->|"mTLS<br/>(kong-cluster-cert)"| Konnect
     DPBox ~~~ NoConn["No direct Konnect<br/>connection"]
 
-    style EKS fill:#f4f4f4,stroke:#9370DB
-    style KICBox fill:#ECECFF,stroke:#9370DB
-    style DPBox fill:#ECECFF,stroke:#9370DB
-    style Konnect fill:#d8d8ff,stroke:#9370DB
+    style EKS fill:#f0f0f0,stroke:#999
+    style KICBox fill:#e0e0e0,stroke:#888
+    style DPBox fill:#e0e0e0,stroke:#888
+    style Konnect fill:#e8e8e8,stroke:#999
     style NoConn fill:#fff,stroke:#ccc,stroke-dasharray: 5 5,color:#999
 ```
 
@@ -1095,7 +1094,7 @@ Kong Gateway can be deployed on **separate compute (EC2/ECS) in your VPC** — o
 The recommended approach is to deploy Kong on **separate compute in your VPC** — outside the EKS cluster but still in private subnets. CloudFront connects via **VPC Origin (PrivateLink)**, making Kong completely unreachable from the public internet:
 
 ```mermaid
-%%{init: {'theme': 'neutral', 'themeVariables': {'primaryColor': '#ECECFF', 'primaryTextColor': '#333', 'primaryBorderColor': '#9370DB', 'lineColor': '#666', 'secondaryColor': '#ffffde', 'tertiaryColor': '#f4f4f4'}}}%%
+%%{init: {'theme': 'neutral'}}%%
 flowchart TB
     Client["Client (HTTPS)"]
 
@@ -1158,7 +1157,7 @@ There are **two ways** to deploy Kong as an external API management layer, and t
 Deploy Kong Gateway on **EC2 instances or ECS Fargate** in your VPC's private subnets — outside the EKS cluster but still inside your network. This gives you a **fully private path with no public endpoint**, identical to how this repo's main architecture works.
 
 ```mermaid
-%%{init: {'theme': 'neutral', 'themeVariables': {'primaryColor': '#ECECFF', 'primaryTextColor': '#333', 'primaryBorderColor': '#9370DB', 'lineColor': '#666', 'secondaryColor': '#ffffde', 'tertiaryColor': '#f4f4f4'}}}%%
+%%{init: {'theme': 'neutral'}}%%
 flowchart TB
     Client["Client (HTTPS)"]
 
@@ -1220,7 +1219,7 @@ flowchart TB
 Fully managed Kong data plane instances hosted on **Kong's infrastructure** (outside your AWS account). This is a managed service with a public endpoint — Kong provisions, scales, and maintains the gateway for you.
 
 ```mermaid
-%%{init: {'theme': 'neutral', 'themeVariables': {'primaryColor': '#ECECFF', 'primaryTextColor': '#333', 'primaryBorderColor': '#9370DB', 'lineColor': '#666', 'secondaryColor': '#ffffde', 'tertiaryColor': '#f4f4f4'}}}%%
+%%{init: {'theme': 'neutral'}}%%
 flowchart TB
     Client["Client (HTTPS)"]
 
