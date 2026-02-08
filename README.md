@@ -18,21 +18,120 @@ Both Istio and Kong implement the **Kubernetes Gateway API** standard for north-
 
 In short: **Istio Gateway** gives you K8s Gateway API routing. **Kong Gateway** gives you K8s Gateway API routing **plus** API management — without needing a separate API gateway service.
 
-## How to Deploy Kong for API Management
+## Key Architecture Decision — How to Deploy Kong for API Management
 
-There are two architectural options for using Kong as an API management layer. This POC implements **Option 1**. The [Appendix](#appendix-kong-as-an-external-api-management-layer) covers Option 2 in detail.
+Before choosing a deployment model, it is important to understand how Kong Konnect configures gateways on Kubernetes — because a current platform limitation directly impacts the architecture.
+
+### Kong Gateway Configuration Options on Kubernetes
+
+When creating an API Gateway in Kong Konnect for Kubernetes, you are presented with three setup choices and one critical configuration decision:
+
+**Where to run your gateway:** Self-managed (deploy anywhere), Serverless (learning and development), or Dedicated Cloud (enterprise-grade managed).
+
+**How to run your gateway:** Docker, Linux binary, or Kubernetes.
+
+**How to store your configuration (the critical choice):** This is where you choose the source of truth for your gateway configuration — also known as your control plane. This choice is **mutually exclusive and cannot be changed after creation**.
+
+The screenshot below shows the Kong Konnect gateway creation screen as of February 2025:
+
+![Kong Gateway Configuration Options — Konnect gateway creation showing the mutually exclusive choice between "Konnect as source" and "Kubernetes API server as source"](docs/images/Kong_Gateway_Configuration_Options.png)
+
+As the built-in comparison table in the Konnect UI shows:
+
+- **Konnect as source** (recommended by Kong) — Full UI/API configuration, Kubernetes CRDs, and Dev Portal. But **no Kubernetes Gateway API support**.
+- **Kubernetes API server as source** (read-only in Konnect) — Full Kubernetes Gateway API support (`Gateway`, `HTTPRoute`, `GRPCRoute`). But Konnect becomes **read-only** — no UI configuration, no Dev Portal, no decK or Terraform management.
+
+### The Limitation: You Cannot Have Both Today
+
+**You cannot get full Konnect management AND Kubernetes Gateway API support in a single Kong Gateway instance.** This is a significant constraint for organisations that want:
+
+- Kubernetes Gateway API compliance for cloud-native routing portability
+- Full Konnect-managed API lifecycle management with UI access for API teams
+- Dev Portal for API consumers
+- Unified observability across all gateway layers
+
+This limitation is expected to improve over time. As the Kubernetes Gateway API matures and becomes the de facto standard, Kong will almost certainly bring full Konnect management support — including Dev Portal, decK, Terraform, and UI-driven configuration — to Gateway API-configured gateways. When that happens, a single Kong Gateway instance could handle both API management and Kubernetes-native routing, simplifying architectures significantly.
+
+However, as of February 2025, this trade-off exists and must be addressed architecturally.
+
+### What This Means for Architecture
+
+Given this limitation, there are two deployment models for using Kong as an API management layer. Each makes a different trade-off:
+
+---
 
 #### Option 1: Kong on K8s — Ingress (K8s Gateway API) + API Management (This Repo)
 
-Kong is deployed **inside the EKS cluster** as a single component that serves as both the K8s Gateway API implementation and the API management layer — handling ingress routing, authentication, rate limiting, and all API policies in one place.
+Kong is deployed **inside the EKS cluster** using **"Kubernetes API server as source"**. This means Kong serves as both the Kubernetes Gateway API implementation and the API management layer — handling ingress routing, authentication, rate limiting, and all API policies in one place.
 
-**Choose this when** your APIs are primarily hosted on Kubernetes and you want a single in-cluster component for both routing and API management.
+**The trade-off:** Because the configuration source is the K8s API server, Konnect is **read-only**. You manage all configuration (routes, plugins, consumers) through Kubernetes CRDs and GitOps — not through the Konnect UI. You still get Konnect analytics and observability, but you lose UI-driven configuration, Dev Portal, and decK/Terraform Konnect provider support.
 
-#### Option 2: Kong External to K8s — Centralised API Management ([Appendix](#appendix-kong-as-an-external-api-management-layer))
+**What you get:**
+- Single component for both Gateway API routing and API management
+- Full Kubernetes Gateway API compliance (`Gateway`, `HTTPRoute`, `GRPCRoute`)
+- All Kong plugins available (rate limiting, JWT, CORS, transforms, etc.) via KongPlugin CRDs
+- Konnect analytics and data plane monitoring (read-only)
+- GitOps-native configuration — everything is Kubernetes YAML
 
-Kong is deployed **outside the EKS cluster** (on EC2/ECS or as a Kong Konnect Dedicated Cloud Gateway) as a centralised API management layer that sits in front of the cluster. A separate Gateway API implementation (e.g., Istio) handles K8s routing inside the cluster.
+**What you lose (due to Konnect being read-only):**
+- No UI-driven configuration from the Konnect dashboard
+- No Dev Portal
+- No decK or Terraform Konnect provider for gateway configuration
+- Configuration management is purely through Kubernetes CRDs
 
-**Choose this when** you need to expose and manage APIs hosted across multiple platforms — Kubernetes, EC2, ECS, Lambda, or third-party services — through a single unified API management layer.
+**Choose this when:** Your APIs are primarily hosted on Kubernetes, your team is comfortable with GitOps-driven configuration, and you want a single in-cluster component for both routing and API management. This is the most operationally simple approach and avoids the cost of running a separate API management layer.
+
+**Future consolidation:** When Kong brings full Konnect management to Gateway API-configured gateways, this option becomes the ideal single-gateway architecture — you would gain UI-driven configuration, Dev Portal, and decK/Terraform support without changing the deployment model.
+
+> **This repo implements Option 1.** See the [Detailed Architecture](#detailed-architecture) section below for the full implementation.
+
+---
+
+#### Option 2: Kong External to K8s — Centralised API Management (Separate Repo)
+
+Kong is deployed **outside the EKS cluster** (on EC2/ECS or as a Kong Konnect Dedicated Cloud Gateway) using **"Konnect as source"**. This gives you the full Konnect management experience — UI-driven configuration, Dev Portal, analytics, decK, and Terraform — but Kong does not implement the Kubernetes Gateway API. A separate Gateway API implementation (e.g., Istio Gateway) handles K8s routing inside the cluster.
+
+**The trade-off:** You need two components — Kong for API management and Istio Gateway (or another Gateway API implementation) for Kubernetes-native routing. This adds an extra network hop and requires two observability stacks (Konnect for API metrics, Kiali/Grafana for Istio metrics).
+
+**What you get:**
+- Full Konnect UI/API management — configure plugins, consumers, rate limiting from the dashboard
+- Dev Portal for API discovery and self-service consumer onboarding
+- decK and Terraform Konnect provider for declarative API policy management
+- Full analytics and real-time dashboards in Konnect
+- Ability to manage APIs across multiple platforms (K8s, EC2, ECS, Lambda) through a single API management layer
+- Kubernetes Gateway API compliance via Istio Gateway (or another implementation)
+
+**What you lose:**
+- Additional network hop (Kong → Istio Gateway → backend services)
+- Two observability stacks to manage (Konnect + Kiali/Grafana)
+- More complex deployment with more moving parts
+
+**Choose this when:** You need full Konnect management capabilities (especially Dev Portal and UI-driven configuration), you have APIs across multiple platforms that need unified management, or you want to keep API management concerns fully separated from K8s cluster operations.
+
+**Future consolidation:** When Kong matures its Gateway API support with full Konnect integration, you could move Kong into the cluster as a single gateway, removing the need for Istio Gateway and simplifying the architecture.
+
+> **Option 2 is covered in a separate repository:** [EKS-Kong-Istio-API-Management-Demo](https://github.com/shanaka-versent/EKS-Kong-Istio-API-Management-Demo) *(coming soon)*
+>
+> That repo implements the architecture detailed in the companion blog post: [Enterprise API Management on Amazon EKS: Kong Gateway with Istio Ambient Mesh](#).
+
+---
+
+### Quick Comparison
+
+| | Option 1: Kong on K8s (This Repo) | Option 2: Kong External (Separate Repo) |
+|---|---|---|
+| **Kong config source** | K8s API server | Konnect |
+| **K8s Gateway API** | ✅ Native | Via Istio Gateway |
+| **Konnect UI management** | ❌ Read-only | ✅ Full |
+| **Dev Portal** | ❌ | ✅ |
+| **decK / Terraform** | ❌ | ✅ |
+| **Analytics** | ✅ Read-only | ✅ Full |
+| **Components in cluster** | Kong only | Kong + Istio Gateway |
+| **Network hops** | 1 (Kong → backend) | 2 (Kong → Istio GW → backend) |
+| **Best for** | K8s-first, GitOps teams | Multi-platform, UI-driven teams |
+| **Consolidation path** | Gains full Konnect when Kong adds support | Removes Istio Gateway when Kong adds support |
+
+> **Note:** Both options use the same Kong Gateway Enterprise with the same plugin ecosystem. The difference is how configuration is managed and whether the Kubernetes Gateway API is handled by Kong directly or by a separate component.
 
 ---
 
