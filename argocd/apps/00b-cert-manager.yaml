@@ -31,6 +31,12 @@ spec:
         crds:
           enabled: true
 
+        # Use public recursive DNS for ACME DNS-01 propagation checks
+        # (default uses cluster CoreDNS which may cache/delay TXT record resolution)
+        extraArgs:
+          - --dns01-recursive-nameservers=8.8.8.8:53,1.1.1.1:53
+          - --dns01-recursive-nameservers-only
+
         # IRSA: cert-manager service account assumes IAM role for Route53 access
         serviceAccount:
           annotations:
