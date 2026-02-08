@@ -973,35 +973,34 @@ flowchart TB
 
 This demo deploys Kong as a **split deployment** — the data plane (Kong Gateway) and KIC (controller) are **separate Helm releases**. Only the KIC controller connects to Konnect:
 
-```
-┌─────────────────────────────────────────────────────────────────┐
-│ EKS Cluster (kong namespace)                                    │
-│                                                                 │
-│  ┌──────────────────────┐      ┌──────────────────────────┐     │
-│  │ KIC Controller       │      │ Kong Gateway (Data Plane)│     │
-│  │ (02b-kong-controller)│      │ (02-kong-gateway)        │     │
-│  │                      │      │                          │     │
-│  │ • Watches K8s CRDs   │─────▶│ • Proxies traffic        │     │
-│  │ • Pushes config via   │admin │ • TLS termination        │     │
-│  │   admin API (:8444)   │ API  │ • Plugin execution       │     │
-│  └──────────┬───────────┘      └──────────────────────────┘     │
-│             │                                                    │
-│             │ mTLS (kong-cluster-cert)                            │
-└─────────────┼────────────────────────────────────────────────────┘
-              │
-              ▼
-┌─────────────────────────────────────┐
-│ Konnect KIC API                     │
-│ <region>.kic.api.konghq.com         │
-│                                     │
-│ Receives (from KIC):                │
-│ • Route configuration               │
-│ • Plugin definitions                │
-│ • Consumer/credential mappings      │
-│ • Gateway API resources             │
-│ • Data plane node registration      │
-│ • Traffic analytics & telemetry     │
-└─────────────────────────────────────┘
+```mermaid
+%%{init: {'theme': 'neutral'}}%%
+flowchart TB
+    subgraph EKS["EKS Cluster (kong namespace)"]
+        direction LR
+        subgraph KICBox["KIC Controller<br/>(02b-kong-controller)"]
+            KIC_Watch["Watches K8s CRDs:<br/>GatewayClass, Gateway, HTTPRoute"]
+        end
+        subgraph DPBox["Kong Gateway — Data Plane<br/>(02-kong-gateway)"]
+            DP_Work["Proxies traffic<br/>TLS termination<br/>Plugin execution"]
+        end
+        KICBox -->|"Pushes config via<br/>admin API (:8001)"| DPBox
+    end
+
+    subgraph Konnect["Konnect KIC API<br/>(region.kic.api.konghq.com)"]
+        direction LR
+        Sync["Route configuration<br/>Plugin definitions<br/>Consumer/credential mappings<br/>Gateway API resources<br/>Data plane node registration<br/>Traffic analytics & telemetry"]
+    end
+
+    Traffic["CloudFront → NLB → :8443"] --> DPBox
+    KICBox -.->|"mTLS<br/>(kong-cluster-cert)"| Konnect
+    DPBox ~~~ NoConn["No direct Konnect<br/>connection"]
+
+    style EKS fill:#f0f0f0,stroke:#999
+    style KICBox fill:#e0e0e0,stroke:#888
+    style DPBox fill:#e0e0e0,stroke:#888
+    style Konnect fill:#e8e8e8,stroke:#999
+    style NoConn fill:#fff,stroke:#ccc,stroke-dasharray: 5 5,color:#999
 ```
 
 **KIC-type Control Plane — key architectural constraint:**
