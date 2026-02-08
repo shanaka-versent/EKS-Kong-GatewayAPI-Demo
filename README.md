@@ -144,7 +144,7 @@ Kong is deployed **outside the EKS cluster** (on EC2/ECS or as a Kong Konnect De
 All implementations in this series follow a common reference architecture. The pattern is **cloud-agnostic** and applies to both AWS (CloudFront) and Azure (Front Door).
 
 ```mermaid
-%%{init: {'theme': 'neutral'}}%%
+%%{init: {'theme': 'neutral', 'themeVariables': {'primaryColor': '#ECECFF', 'primaryBorderColor': '#9370DB', 'lineColor': '#666', 'secondaryColor': '#ffffde'}}}%%
 flowchart TB
     Client["Client"]
 
@@ -192,7 +192,7 @@ flowchart TB
 Kong Gateway serves as BOTH the API Gateway and the Kubernetes Gateway API implementation. All traffic (web + API) flows through a single path.
 
 ```mermaid
-%%{init: {'theme': 'neutral', 'themeVariables': {'fontSize': '16px'}, 'flowchart': {'nodeSpacing': 50, 'rankSpacing': 80, 'padding': 30}}}%%
+%%{init: {'theme': 'neutral', 'themeVariables': {'primaryColor': '#ECECFF', 'primaryBorderColor': '#9370DB', 'lineColor': '#666', 'secondaryColor': '#ffffde', 'fontSize': '16px'}, 'flowchart': {'nodeSpacing': 50, 'rankSpacing': 80, 'padding': 30}}}%%
 flowchart TB
     Client["Client"]
 
@@ -387,7 +387,7 @@ Kong Gateway implements the Kubernetes Gateway API **exactly like Istio does**. 
 | **GatewayClass controllerName** | `gateway.istio.io/gateway-controller` | `konghq.com/kic-gateway-controller` |
 
 ```mermaid
-%%{init: {'theme': 'neutral'}}%%
+%%{init: {'theme': 'neutral', 'themeVariables': {'primaryColor': '#ECECFF', 'primaryBorderColor': '#9370DB', 'lineColor': '#666', 'secondaryColor': '#ffffde'}}}%%
 flowchart LR
     subgraph KongImpl["Kong Gateway API Implementation"]
         direction LR
@@ -421,7 +421,7 @@ flowchart LR
 ## Architecture Layers
 
 ```mermaid
-%%{init: {'theme': 'neutral'}}%%
+%%{init: {'theme': 'neutral', 'themeVariables': {'primaryColor': '#ECECFF', 'primaryBorderColor': '#9370DB', 'lineColor': '#666', 'secondaryColor': '#ffffde'}}}%%
 flowchart TB
     subgraph L1["Layer 1: Cloud Foundation"]
         direction LR
@@ -469,7 +469,7 @@ flowchart TB
 Security is applied at every layer. WAF handles infrastructure threats at the edge, Kong plugins handle application/API concerns inside the cluster.
 
 ```mermaid
-%%{init: {'theme': 'neutral'}}%%
+%%{init: {'theme': 'neutral', 'themeVariables': {'primaryColor': '#ECECFF', 'primaryBorderColor': '#9370DB', 'lineColor': '#666', 'secondaryColor': '#ffffde'}}}%%
 flowchart LR
     subgraph L1["Layer 1: Edge"]
         WAF["WAF"]
@@ -502,7 +502,7 @@ flowchart LR
 ## Kong Plugin Chain
 
 ```mermaid
-%%{init: {'theme': 'neutral'}}%%
+%%{init: {'theme': 'neutral', 'themeVariables': {'primaryColor': '#ECECFF', 'primaryBorderColor': '#9370DB', 'lineColor': '#666', 'secondaryColor': '#ffffde'}}}%%
 flowchart LR
     Req["Request"]
 
@@ -566,7 +566,7 @@ plugin: cors
 NLB health probes target Kong's status endpoint directly. Application health checks route through Kong to the health-responder service:
 
 ```mermaid
-%%{init: {'theme': 'neutral'}}%%
+%%{init: {'theme': 'neutral', 'themeVariables': {'primaryColor': '#ECECFF', 'primaryBorderColor': '#9370DB', 'lineColor': '#666', 'secondaryColor': '#ffffde'}}}%%
 flowchart LR
     NLB["Internal NLB"]
     Kong["Kong Gateway"]
@@ -592,7 +592,7 @@ flowchart LR
 ## Deployment Steps
 
 ```mermaid
-%%{init: {'theme': 'neutral'}}%%
+%%{init: {'theme': 'neutral', 'themeVariables': {'primaryColor': '#ECECFF', 'primaryBorderColor': '#9370DB', 'lineColor': '#666', 'secondaryColor': '#ffffde'}}}%%
 flowchart LR
     S1["1. Clone +\nConfigure"] --> S2["2. Terraform\n(L1 & L2)"]
     S2 --> S3["3. Post-Terraform\nSetup (automated)"]
@@ -874,7 +874,7 @@ kubectl port-forward svc/argocd-server -n argocd 8080:443
 Kong Konnect is a unified API platform that provides centralized management for APIs, LLMs, events, and microservices. It combines a cloud-hosted control plane with flexible data plane deployment options. **This demo uses Self-Hosted data planes on EKS.**
 
 ```mermaid
-%%{init: {'theme': 'neutral', 'themeVariables': {'fontSize': '14px'}}}%%
+%%{init: {'theme': 'neutral', 'themeVariables': {'primaryColor': '#ECECFF', 'primaryBorderColor': '#9370DB', 'lineColor': '#666', 'secondaryColor': '#ffffde', 'fontSize': '14px'}}}%%
 flowchart TB
     subgraph Konnect["Kong Konnect SaaS — Cloud Control Plane"]
         direction TB
@@ -947,7 +947,7 @@ flowchart TB
 This demo deploys Kong as a **split deployment** — the data plane (Kong Gateway) and KIC (controller) are **separate Helm releases**. Only the KIC controller connects to Konnect:
 
 ```mermaid
-%%{init: {'theme': 'neutral'}}%%
+%%{init: {'theme': 'neutral', 'themeVariables': {'primaryColor': '#ECECFF', 'primaryBorderColor': '#9370DB', 'lineColor': '#666', 'secondaryColor': '#ffffde'}}}%%
 flowchart TB
     subgraph EKS["EKS Cluster (kong namespace)"]
         direction LR
@@ -1076,7 +1076,7 @@ Kong Gateway can be deployed on **separate compute (EC2/ECS) in your VPC** — o
 The recommended approach is to deploy Kong on **separate compute in your VPC** — outside the EKS cluster but still in private subnets. CloudFront connects via **VPC Origin (PrivateLink)**, making Kong completely unreachable from the public internet:
 
 ```mermaid
-%%{init: {'theme': 'neutral'}}%%
+%%{init: {'theme': 'neutral', 'themeVariables': {'primaryColor': '#ECECFF', 'primaryBorderColor': '#9370DB', 'lineColor': '#666', 'secondaryColor': '#ffffde'}}}%%
 flowchart TB
     Client["Client (HTTPS)"]
 
@@ -1139,7 +1139,7 @@ There are **two ways** to deploy Kong as an external API management layer, and t
 Deploy Kong Gateway on **EC2 instances or ECS Fargate** in your VPC's private subnets — outside the EKS cluster but still inside your network. This gives you a **fully private path with no public endpoint**, identical to how this repo's main architecture works.
 
 ```mermaid
-%%{init: {'theme': 'neutral'}}%%
+%%{init: {'theme': 'neutral', 'themeVariables': {'primaryColor': '#ECECFF', 'primaryBorderColor': '#9370DB', 'lineColor': '#666', 'secondaryColor': '#ffffde'}}}%%
 flowchart TB
     Client["Client (HTTPS)"]
 
@@ -1201,7 +1201,7 @@ flowchart TB
 Fully managed Kong data plane instances hosted on **Kong's infrastructure** (outside your AWS account). This is a managed service with a public endpoint — Kong provisions, scales, and maintains the gateway for you.
 
 ```mermaid
-%%{init: {'theme': 'neutral'}}%%
+%%{init: {'theme': 'neutral', 'themeVariables': {'primaryColor': '#ECECFF', 'primaryBorderColor': '#9370DB', 'lineColor': '#666', 'secondaryColor': '#ffffde'}}}%%
 flowchart TB
     Client["Client (HTTPS)"]
 
