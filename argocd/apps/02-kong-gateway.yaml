@@ -37,29 +37,16 @@ spec:
         ingressController:
           enabled: false
 
-        # Konnect telemetry: data plane sends analytics directly to Konnect
-        # KIC handles config sync, but the data plane must report telemetry itself
+        # DB-less mode — KIC pushes config via admin API
+        # No Konnect env vars on data plane: for KIC-type control planes,
+        # KIC handles ALL Konnect communication (config sync + telemetry).
+        # Direct data plane → Konnect telemetry connections are not supported
+        # with CLUSTER_TYPE_K8S_INGRESS_CONTROLLER control planes.
         #
-        # IMPORTANT: Do NOT set role=data_plane here — it disables the admin API
-        # listener, which KIC needs for gateway discovery (gatewayDiscovery).
-        # The telemetry connection works without role=data_plane as long as
-        # konnect_mode, cluster_telemetry_endpoint, and cluster_cert are set.
+        # Do NOT set role=data_plane — it disables the admin API listener
+        # which KIC needs for gateway discovery (gatewayDiscovery).
         env:
-          konnect_mode: "on"
-          vitals: "off"
-          cluster_mtls: pki
-          cluster_control_plane: "872b9828-1cd8-4f55-86f1-46059db954a3.au.cp0.konghq.com:443"
-          cluster_server_name: "872b9828-1cd8-4f55-86f1-46059db954a3.au.cp0.konghq.com"
-          cluster_telemetry_endpoint: "872b9828-1cd8-4f55-86f1-46059db954a3.au.tp0.konghq.com:443"
-          cluster_telemetry_server_name: "872b9828-1cd8-4f55-86f1-46059db954a3.au.tp0.konghq.com"
-          cluster_cert: /etc/secrets/kong-cluster-cert/tls.crt
-          cluster_cert_key: /etc/secrets/kong-cluster-cert/tls.key
-          lua_ssl_trusted_certificate: system
           database: "off"
-
-        # Mount Konnect mTLS certificate for telemetry authentication
-        secretVolumes:
-          - kong-cluster-cert
 
         # Admin API enabled for KIC gateway discovery (ClusterIP only)
         admin:
