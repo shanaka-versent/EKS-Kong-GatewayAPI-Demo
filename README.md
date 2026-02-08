@@ -110,9 +110,9 @@ Kong is deployed **outside the EKS cluster** (on EC2/ECS or as a Kong Konnect De
 
 **Future consolidation:** When Kong matures its Gateway API support with full Konnect integration, you could move Kong into the cluster as a single gateway, removing the need for Istio Gateway and simplifying the architecture.
 
-> **Option 2 is covered in a separate repository:** [EKS-Kong-Istio-API-Management-Demo](https://github.com/shanaka-versent/EKS-Kong-Istio-API-Management-Demo) *(coming soon)*
+> **Option 2 is covered in the [Appendix](#appendix-kong-as-an-external-api-management-layer) below and in a separate repository:** [EKS-Kong-Istio-API-Management-Demo](https://github.com/shanaka-versent/EKS-Kong-Istio-API-Management-Demo) *(coming soon)*
 >
-> That repo implements the architecture detailed in the companion blog post: [Enterprise API Management on Amazon EKS: Kong Gateway with Istio Ambient Mesh](#).
+> The Appendix details the architecture. The separate repo implements it, as described in the companion blog post: [Enterprise API Management on Amazon EKS: Kong Gateway with Istio Ambient Mesh](#).
 
 ---
 
