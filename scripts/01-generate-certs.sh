@@ -2,12 +2,20 @@
 # EKS Kong Gateway POC - Generate TLS Certificates for End-to-End TLS
 # @author Shanaka Jayasundera - shanakaj@gmail.com
 #
+# ⚠️  DEPRECATED: This script is no longer needed for proxy TLS.
+#     cert-manager now automatically obtains and renews Let's Encrypt
+#     certificates via DNS-01 challenge on Route53.
+#     The kong-gateway-tls secret is managed by cert-manager (see
+#     argocd/apps/00b-cert-manager.yaml and k8s/cert-manager/).
+#
+#     For Konnect mTLS authentication, use scripts/setup-konnect.sh instead.
+#
 # This script generates self-signed TLS certificates for the Kong Gateway backend.
 #
 # END-TO-END TLS ARCHITECTURE:
 # ============================
 # 1. Client → CloudFront: TLS terminated using ACM certificate (managed by AWS)
-# 2. CloudFront → VPC Origin → NLB → Kong Gateway: TLS using certificates generated here
+# 2. CloudFront → VPC Origin → NLB → Kong Gateway: TLS using Let's Encrypt cert (cert-manager)
 # 3. Kong Gateway → Backend Pods: Plain HTTP (cluster-internal)
 #
 # The certificates generated here are for the BACKEND connection

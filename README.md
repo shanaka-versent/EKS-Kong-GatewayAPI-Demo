@@ -252,8 +252,8 @@ flowchart TB
 
     subgraph Konnect["Kong Konnect SaaS"]
         direction LR
-        Analytics["Analytics"]
-        Portal["Dev Portal"]
+        ConfigSync["Config Sync<br/>(read-only)"]
+        Analytics["Traffic Analytics<br/>& Monitoring"]
     end
 
     subgraph R53["AWS Route53"]
@@ -288,7 +288,8 @@ flowchart TB
     KongDP -->|"Plain HTTP :8080<br/>(unencrypted)"| HealthRoute
     HealthRoute --> HealthPod
 
-    KongDP -.-> Konnect
+    KIC -.->|"config sync<br/>(mTLS)"| ConfigSync
+    KongDP -.->|"telemetry<br/>(mTLS)"| Analytics
 
     style EKS fill:#f0f0f0
     style KongNS fill:#ffffff
@@ -311,7 +312,8 @@ Client ──🔒 TLS 1──→ CloudFront (Decrypt 🔓 + WAF + Re-encrypt �
 - **Namespace isolation** — each tenant and the API have their own namespace with ReferenceGrant for cross-namespace routing
 - **Plugins per-route** — only `/api/users` has rate limiting, request transforms, and CORS; tenant apps are clean pass-through
 - **Terraform-managed NLB** — created before Kong deploys (avoids chicken-and-egg with CloudFront VPC Origin)
-- **Kong Konnect** — telemetry and management via SaaS, no admin API exposed in-cluster
+- **Split deployment** — KIC (controller) and Kong Gateway (data plane) are separate Helm releases; KIC syncs config to Konnect, data plane sends traffic telemetry directly
+- **Kong Konnect** — analytics, monitoring, and config visibility via SaaS; admin API exposed only as ClusterIP for KIC gateway discovery
 
 ### Node Pool Layout
 
@@ -675,86 +677,86 @@ dig NS kong.mydomain.com
 
 ### Step 4: Configure Kong Konnect Integration (Layer 3 Pre-config)
 
-This step **must be completed before Step 5**. ArgoCD will deploy Kong Gateway Enterprise, which requires the `konnect-client-tls` secret and Helm values configured with your Konnect endpoints.
+This step **must be completed before Step 5**. ArgoCD deploys Kong as a **split deployment** — the data plane and KIC controller are separate Helm releases, both connecting to Konnect independently. The only manual pre-requisite is creating the mTLS certificate secret that authenticates both components to Konnect.
 
-> **Gateway TLS (end-to-end encryption)** is handled automatically by **cert-manager** — no manual certificate generation required.
+> **Gateway TLS (end-to-end encryption)** is handled automatically by **cert-manager** — no manual certificate generation required for proxy TLS. The certificate generated here is **only for Konnect mTLS authentication**.
 
 > **Don't have a Konnect account?** See the [OSS alternative](#alternative-kong-gateway-oss-without-konnect) to deploy without Konnect.
 
-1. **Create a Control Plane in Konnect**
-   - Sign in to [cloud.konghq.com](https://cloud.konghq.com) → **Gateway Manager** → **[+ New Control Plane](https://cloud.konghq.com/gateway-manager/create-gateway)**
-   - Select **Kong Ingress Controller** as the control plane type
-   - Name it (e.g., `eks-demo`) → **Create** → note the **Control Plane ID**
+#### 4a. Create a Control Plane in Konnect
 
-2. **Generate and register mTLS certificates**
-   ```bash
-   # Generate certificate
-   openssl req -new -x509 -nodes -newkey rsa:2048 \
-     -subj "/CN=kongdp/C=US" \
-     -keyout ./tls.key -out ./tls.crt -days 365
+1. Sign in to [cloud.konghq.com](https://cloud.konghq.com) → **Gateway Manager** → **[+ New Control Plane](https://cloud.konghq.com/gateway-manager/create-gateway)**
+2. Select **Kong Ingress Controller** as the control plane type
+3. Name it (e.g., `eks-demo`) → **Create**
+4. Note the **Control Plane ID** (UUID shown in the URL or dashboard)
+5. Generate a **Personal Access Token**: Account Settings → **[API Keys](https://cloud.konghq.com/global/account/tokens)** → **Generate Token**
 
-   # Create K8s namespace and secret
-   kubectl create namespace kong
-   kubectl create secret tls konnect-client-tls -n kong \
-     --cert=./tls.crt --key=./tls.key
+#### 4b. Generate mTLS Certificate and Create K8s Secret
 
-   # Register certificate with Konnect
-   export KONNECT_REGION="us"          # us, eu, au, me, in, sg
-   export KONNECT_TOKEN="kpat_xxx..."  # Personal access token from Konnect
-   export CONTROL_PLANE_ID="your-cp-id-here"
+Generate a self-signed certificate locally, register it with Konnect via API, and create the K8s secret. No interaction with the Konnect UI is needed beyond Step 4a.
 
-   CERT=$(awk 'NF {sub(/\r/, ""); printf "%s\\n",$0;}' tls.crt)
-   curl -X POST "https://${KONNECT_REGION}.api.konghq.com/v2/control-planes/${CONTROL_PLANE_ID}/dp-client-certificates" \
-     -H "Authorization: Bearer $KONNECT_TOKEN" \
-     --json "{\"cert\": \"$CERT\"}"
-   ```
+> **Automation:** You can use `./scripts/setup-konnect.sh` to automate Steps 4b and print the endpoints for Step 4c. Set `KONNECT_REGION`, `KONNECT_TOKEN`, and `CONTROL_PLANE_ID` environment variables first.
 
-3. **Update Helm Values**
+```bash
+# Generate self-signed mTLS certificate for Konnect authentication
+openssl req -new -x509 -nodes -newkey rsa:2048 \
+  -subj "/CN=kongdp/C=US" \
+  -keyout ./tls.key -out ./tls.crt -days 365
 
-   Update `k8s/kong/konnect-values.yaml` with your Konnect endpoints:
-   ```yaml
-   image:
-     repository: kong/kong-gateway   # Enterprise image (license via Konnect)
-     tag: "3.9"
+# Register the certificate with Konnect (via API — no UI needed)
+export KONNECT_REGION="us"              # us, eu, au, me, in, sg
+export KONNECT_TOKEN="kpat_xxx..."      # Personal access token from Step 4a
+export CONTROL_PLANE_ID="your-cp-id"    # Control Plane ID from Step 4a
 
-   ingressController:
-     enabled: true
-     konnect:
-       enabled: true
-       controlPlaneId: "<your-control-plane-id>"
-       tlsClientCertSecretName: konnect-client-tls
+CERT=$(awk 'NF {sub(/\r/, ""); printf "%s\\n",$0;}' tls.crt)
+curl -X POST "https://${KONNECT_REGION}.api.konghq.com/v2/control-planes/${CONTROL_PLANE_ID}/dp-client-certificates" \
+  -H "Authorization: Bearer $KONNECT_TOKEN" \
+  --json "{\"cert\": \"$CERT\"}"
 
-   gateway:
-     env:
-       role: data_plane
-       database: "off"
-       konnect_mode: "on"
-       vitals: "off"
-       cluster_mtls: pki
-       cluster_control_plane: "<your-cp>.us.cp0.konghq.com:443"
-       cluster_server_name: "<your-cp>.us.cp0.konghq.com"
-       cluster_telemetry_endpoint: "<your-tp>.us.tp0.konghq.com:443"
-       cluster_telemetry_server_name: "<your-tp>.us.tp0.konghq.com"
-       cluster_cert: /etc/secrets/konnect-client-tls/tls.crt
-       cluster_cert_key: /etc/secrets/konnect-client-tls/tls.key
-       lua_ssl_trusted_certificate: system
+# Create K8s namespace and secret
+kubectl create namespace kong
+kubectl create secret tls kong-cluster-cert -n kong \
+  --cert=./tls.crt --key=./tls.key
+```
 
-     secretVolumes:
-       - konnect-client-tls
-   ```
+#### 4c. Update ArgoCD Apps with Konnect Endpoints
+
+Update the Control Plane ID and regional endpoints in the two ArgoCD app files. Replace `<CP-ID>` with your Control Plane ID and `<REGION>` with your Konnect region code (e.g., `us`, `eu`, `au`):
+
+**`argocd/apps/02b-kong-controller.yaml`** — KIC Konnect config:
+```yaml
+ingressController:
+  konnect:
+    enabled: true
+    runtimeGroupID: "<CP-ID>"                  # ← Your Control Plane ID
+    apiHostname: "<REGION>.kic.api.konghq.com" # ← Your region
+    tlsClientCertSecretName: "kong-cluster-cert"
+```
+
+**`argocd/apps/02-kong-gateway.yaml`** — Data plane telemetry config:
+```yaml
+env:
+  konnect_mode: "on"
+  cluster_control_plane: "<CP-ID>.<REGION>.cp0.konghq.com:443"
+  cluster_server_name: "<CP-ID>.<REGION>.cp0.konghq.com"
+  cluster_telemetry_endpoint: "<CP-ID>.<REGION>.tp0.konghq.com:443"
+  cluster_telemetry_server_name: "<CP-ID>.<REGION>.tp0.konghq.com"
+  cluster_cert: /etc/secrets/kong-cluster-cert/tls.crt
+  cluster_cert_key: /etc/secrets/kong-cluster-cert/tls.key
+```
+
+> **Why two files?** This demo uses a **split deployment** — KIC (controller) and Kong Gateway (data plane) are separate Helm releases. KIC syncs K8s CRD configuration to Konnect, while the data plane sends traffic analytics directly. Both authenticate to Konnect using the same `kong-cluster-cert` secret but connect to different endpoints. See [Konnect Split Deployment Architecture](#konnect-split-deployment--telemetry-architecture) for details.
 
 <details>
-<summary>Konnect Configuration Parameters Reference</summary>
+<summary>Konnect Endpoint Reference</summary>
 
-| Parameter | Description | Example |
-|-----------|-------------|---------|
-| `cluster_control_plane` | Control plane endpoint (host:port) | `example.us.cp0.konghq.com:443` |
-| `cluster_server_name` | SNI for TLS connection to control plane | `example.us.cp0.konghq.com` |
-| `cluster_telemetry_endpoint` | Telemetry endpoint for analytics | `example.us.tp0.konghq.com:443` |
-| `cluster_telemetry_server_name` | SNI for telemetry TLS connection | `example.us.tp0.konghq.com` |
-| `cluster_mtls` | mTLS mode (`pki` for Konnect) | `pki` |
-| `cluster_cert` | Path to client certificate | `/etc/secrets/konnect-client-tls/tls.crt` |
-| `cluster_cert_key` | Path to client private key | `/etc/secrets/konnect-client-tls/tls.key` |
+| Endpoint | Used By | Purpose | Format |
+|----------|---------|---------|--------|
+| `<REGION>.kic.api.konghq.com` | KIC Controller | Config sync (CRDs → Konnect) | `argocd/apps/02b-kong-controller.yaml` |
+| `<CP-ID>.<REGION>.cp0.konghq.com:443` | Data Plane | Control plane connection | `argocd/apps/02-kong-gateway.yaml` |
+| `<CP-ID>.<REGION>.tp0.konghq.com:443` | Data Plane | Telemetry (analytics, stats) | `argocd/apps/02-kong-gateway.yaml` |
+
+**Region codes:** `us`, `eu`, `au`, `me`, `in`, `sg`
 
 </details>
 
@@ -797,8 +799,11 @@ kubectl get gatewayclasses,gateways,httproutes -A
 kubectl get certificate -n kong
 kubectl describe certificate kong-gateway-tls -n kong
 
-# Verify Konnect connection
+# Verify Konnect — KIC config sync
 kubectl logs -n kong -l app.kubernetes.io/instance=kong-controller --tail=10 | grep "Konnect"
+
+# Verify Konnect — Data plane telemetry connection
+kubectl logs -n kong -l app.kubernetes.io/instance=kong-gateway --tail=20 | grep -i "telemetry\|konnect\|cluster"
 ```
 
 #### Test All Routes
@@ -883,6 +888,68 @@ Kong Konnect is a unified API platform that provides centralized management for 
 
 > For full details on each capability, see the [Kong Konnect documentation](https://developer.konghq.com/konnect/).
 
+### Konnect Split Deployment & Telemetry Architecture
+
+This demo deploys Kong as a **split deployment** — the data plane (Kong Gateway) and control plane connector (Kong Ingress Controller) are **separate Helm releases**, each with its own Konnect connection. This is a deliberate architectural choice:
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│ EKS Cluster (kong namespace)                                    │
+│                                                                 │
+│  ┌──────────────────────┐      ┌──────────────────────────┐     │
+│  │ KIC Controller       │      │ Kong Gateway (Data Plane)│     │
+│  │ (02b-kong-controller)│      │ (02-kong-gateway)        │     │
+│  │                      │      │                          │     │
+│  │ • Watches K8s CRDs   │─────▶│ • Proxies traffic        │     │
+│  │ • Pushes config via   │admin │ • TLS termination        │     │
+│  │   admin API           │ API  │ • Plugin execution       │     │
+│  └──────────┬───────────┘      └──────────┬───────────────┘     │
+│             │                              │                     │
+│             │ mTLS (kong-cluster-cert)      │ mTLS (kong-cluster-cert)
+└─────────────┼──────────────────────────────┼─────────────────────┘
+              │                              │
+              ▼                              ▼
+┌─────────────────────────┐  ┌──────────────────────────────────┐
+│ Konnect KIC API         │  │ Konnect Control Plane + Telemetry│
+│ <region>.kic.api.       │  │ <cp-id>.<region>.cp0.konghq.com  │
+│ konghq.com              │  │ <cp-id>.<region>.tp0.konghq.com  │
+│                         │  │                                  │
+│ Receives:               │  │ Receives:                        │
+│ • Route configuration   │  │ • Request counts & status codes  │
+│ • Plugin definitions    │  │ • Latency metrics (P50/P95/P99)  │
+│ • Consumer/credential   │  │ • Consumer-level analytics       │
+│   mappings              │  │ • Upstream health data            │
+│ • Gateway API resources │  │ • Error rates & traceability     │
+└─────────────────────────┘  └──────────────────────────────────┘
+```
+
+**Why split deployment matters for Konnect analytics:**
+
+| Component | Connects To | What It Sends | Config Key |
+|-----------|-------------|---------------|------------|
+| **KIC Controller** | `<region>.kic.api.konghq.com` | Route config, plugins, consumers (CRD → Konnect sync) | `ingressController.konnect` |
+| **Data Plane** | `<cp-id>.<region>.cp0.konghq.com` | Control plane heartbeat, node status | `env.cluster_control_plane` |
+| **Data Plane** | `<cp-id>.<region>.tp0.konghq.com` | **Traffic analytics, request metrics, latency data** | `env.cluster_telemetry_endpoint` |
+
+The data plane **must** have its own direct Konnect connection for analytics to appear in the Konnect dashboard. KIC only syncs configuration — it does not relay traffic metrics. Without the `cluster_telemetry_endpoint` configured on the data plane, the Konnect Analytics dashboard will show **zero requests** even though traffic is flowing.
+
+**Key data plane env vars for telemetry:**
+
+```yaml
+env:
+  konnect_mode: "on"           # Enable Konnect mode
+  role: data_plane              # Identify as data plane node
+  database: "off"               # DB-less (config pushed by KIC via admin API)
+  cluster_mtls: pki             # mTLS authentication mode
+  cluster_telemetry_endpoint:   "<cp-id>.<region>.tp0.konghq.com:443"  # Analytics endpoint
+  cluster_control_plane:        "<cp-id>.<region>.cp0.konghq.com:443"  # CP heartbeat
+  cluster_cert:                 /etc/secrets/kong-cluster-cert/tls.crt  # mTLS cert
+  cluster_cert_key:             /etc/secrets/kong-cluster-cert/tls.key  # mTLS key
+  lua_ssl_trusted_certificate:  system  # Trust system CA bundle for outbound TLS
+```
+
+Both components authenticate to Konnect using the **same** `kong-cluster-cert` TLS secret, mounted via `secretVolumes`.
+
 ---
 
 ## Alternative: Kong Gateway OSS (Without Konnect)
@@ -903,36 +970,43 @@ If you don't have a Kong Konnect subscription and don't need Enterprise features
 
 ### OSS Deployment Steps
 
-**Skip the Konnect steps** in Step 4 entirely — cert-manager handles Gateway TLS automatically (same as Enterprise):
+**Skip Step 4 entirely** — no Konnect setup, no mTLS certificates, no telemetry configuration. cert-manager still handles Gateway TLS automatically (same as Enterprise).
 
-1. **Create the kong namespace**
+1. **Create the kong namespace** (cert-manager will auto-create the `kong-gateway-tls` secret for proxy TLS)
    ```bash
    kubectl create namespace kong
    ```
 
-   > **Note:** The `kong-gateway-tls` secret is created automatically by cert-manager (deployed via ArgoCD). No manual certificate generation needed — cert-manager obtains a free Let's Encrypt certificate via DNS-01 challenge on Route53.
+2. **Modify the ArgoCD apps** to remove Konnect-specific config:
 
-2. **Use the OSS Helm values** (`k8s/kong/values.yaml` instead of `konnect-values.yaml`):
+   **`argocd/apps/02-kong-gateway.yaml`** — Remove all Konnect env vars:
    ```yaml
    image:
      repository: kong/kong    # OSS image (not kong/kong-gateway)
      tag: "3.9"
-
    ingressController:
-     enabled: true
-     # No konnect section needed
-
-   gateway:
-     env:
-       database: "off"        # DB-less mode
-       # No konnect_mode, cluster_*, or role settings needed
+     enabled: false
+   env:
+     database: "off"          # DB-less mode
+     # Remove: konnect_mode, role, cluster_*, vitals, secretVolumes
+   # Remove: secretVolumes section entirely
    ```
 
-3. **Update the ArgoCD app** (`argocd/apps/02-kong-gateway.yaml`) to reference `values.yaml` instead of `konnect-values.yaml`
+   **`argocd/apps/02b-kong-controller.yaml`** — Remove Konnect section from KIC:
+   ```yaml
+   ingressController:
+     enabled: true
+     # Remove the entire konnect: block
+     gatewayDiscovery:
+       enabled: true
+       adminApiService:
+         name: "kong-gateway-kong-admin"
+         namespace: "kong"
+   ```
 
-4. **Deploy Steps 1-3, then Step 5-6 directly** — ArgoCD will deploy Kong Gateway OSS with auto-managed Let's Encrypt TLS
+3. **Deploy Steps 1-3, then Step 5-6 directly** — ArgoCD deploys Kong Gateway OSS with auto-managed Let's Encrypt TLS
 
-> **Note:** The Gateway API resources (GatewayClass, Gateway, HTTPRoute) work identically with both editions. Only the available plugin set and management capabilities differ.
+> **Note:** The Gateway API resources (GatewayClass, Gateway, HTTPRoute) work identically with both editions. Only the available plugin set, Konnect analytics, and management capabilities differ.
 
 ---
 
@@ -1362,8 +1436,27 @@ values: |
   ingressController:
     enabled: false    # KIC is a separate Helm release
 
+  # Konnect telemetry: data plane sends traffic analytics directly to Konnect
+  # Without these, Konnect Analytics dashboard will show 0 requests
+  env:
+    konnect_mode: "on"
+    vitals: "off"
+    cluster_mtls: pki
+    cluster_control_plane: "<CP-ID>.<REGION>.cp0.konghq.com:443"
+    cluster_server_name: "<CP-ID>.<REGION>.cp0.konghq.com"
+    cluster_telemetry_endpoint: "<CP-ID>.<REGION>.tp0.konghq.com:443"
+    cluster_telemetry_server_name: "<CP-ID>.<REGION>.tp0.konghq.com"
+    cluster_cert: /etc/secrets/kong-cluster-cert/tls.crt
+    cluster_cert_key: /etc/secrets/kong-cluster-cert/tls.key
+    lua_ssl_trusted_certificate: system
+    role: data_plane
+    database: "off"
+
+  secretVolumes:
+    - kong-cluster-cert
+
   admin:
-    enabled: true     # KIC connects via admin API
+    enabled: true     # KIC connects via admin API (must stay enabled with role: data_plane)
     type: ClusterIP
     http:
       enabled: true
@@ -1461,7 +1554,7 @@ kubectl get ingress -A   # Should return "No resources found"
 |-------|-------|-----|
 | `403: non-KIC cluster` | CP created as `CLUSTER_TYPE_CONTROL_PLANE` | Delete CP and recreate with `CLUSTER_TYPE_K8S_INGRESS_CONTROLLER` (type is immutable) |
 | `401: not authorized` | Certificate not registered with the CP, or wrong CP ID | Re-register cert via Step 3, or verify `runtimeGroupID` matches CP ID from Step 1 |
-| `role: data_plane` disables admin API | Kong in `data_plane` mode ignores admin API settings | Do **not** set `role: data_plane` when using KIC — KIC needs the admin API |
+| `role: data_plane` + admin API | `role: data_plane` is needed for Konnect telemetry; explicit `admin.enabled: true` keeps admin API alive | Ensure `admin.enabled: true` is set alongside `role: data_plane` — KIC needs the admin API for gateway discovery |
 | KIC CrashLoopBackOff on `:8444` | Data plane pods not Ready, admin API not in endpoints | Override readiness probe to `/status` instead of `/status/ready` |
 | `controlPlaneID` not recognized | Helm chart uses a different parameter name | Change to `runtimeGroupID` in Helm values |
 | `gatewayDiscovery` not found | Must be nested under `ingressController`, not at top level | Indent correctly under `ingressController:` |

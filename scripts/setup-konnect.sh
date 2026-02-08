@@ -2,74 +2,175 @@
 # Setup Kong Konnect Integration
 # @author Shanaka Jayasundera - shanakaj@gmail.com
 #
-# This script helps configure Kong Gateway to connect to Kong Konnect.
+# Generates a self-signed mTLS certificate, registers it with Konnect via API,
+# and creates the K8s secret used by both the data plane and KIC controller.
+#
+# This script replaces any manual Konnect UI certificate download workflow.
+# All interaction with Konnect is via API — no UI steps required beyond
+# creating the Control Plane and generating a Personal Access Token.
 #
 # Prerequisites:
-# 1. Log in to Kong Konnect: https://cloud.konghq.com
-# 2. Create/select a Control Plane
-# 3. Go to Data Plane Nodes → New Data Plane Node
-# 4. Download the certificates (tls.crt, tls.key, ca.crt)
+#   1. A Konnect Control Plane (KIC type) — note the Control Plane ID
+#   2. A Konnect Personal Access Token (kpat_xxx)
+#   3. kubectl configured and pointing to your EKS cluster
+#
+# Usage:
+#   export KONNECT_REGION="au"           # us, eu, au, me, in, sg
+#   export KONNECT_TOKEN="kpat_xxx..."
+#   export CONTROL_PLANE_ID="your-cp-id-here"
+#   ./scripts/setup-konnect.sh
+#
+# What it does:
+#   1. Generates a self-signed mTLS certificate (tls.crt + tls.key)
+#   2. Registers the certificate with Konnect via API
+#   3. Creates the kong-cluster-cert K8s TLS secret in the kong namespace
+#   4. Prints the endpoints to configure in ArgoCD apps
 
-set -e
+set -euo pipefail
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-CERTS_DIR="${1:-$SCRIPT_DIR/../certs/konnect}"
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+NC='\033[0m'
 
-echo "=== Kong Konnect Integration Setup ==="
-echo ""
-echo "This script will create Kubernetes secrets for Kong Konnect connection."
-echo ""
+log()  { echo -e "${GREEN}[INFO]${NC} $*"; }
+warn() { echo -e "${YELLOW}[WARN]${NC} $*"; }
+error(){ echo -e "${RED}[ERROR]${NC} $*"; }
 
-# Check if certificates exist
-if [[ ! -f "${CERTS_DIR}/tls.crt" ]] || [[ ! -f "${CERTS_DIR}/tls.key" ]] || [[ ! -f "${CERTS_DIR}/ca.crt" ]]; then
-    echo "ERROR: Certificate files not found in ${CERTS_DIR}"
+# ---------------------------------------------------------------------------
+# Validate environment variables
+# ---------------------------------------------------------------------------
+validate_env() {
+    local missing=false
+
+    if [[ -z "${KONNECT_REGION:-}" ]]; then
+        error "KONNECT_REGION not set (e.g., us, eu, au, me, in, sg)"
+        missing=true
+    fi
+    if [[ -z "${KONNECT_TOKEN:-}" ]]; then
+        error "KONNECT_TOKEN not set (Personal Access Token from Konnect)"
+        missing=true
+    fi
+    if [[ -z "${CONTROL_PLANE_ID:-}" ]]; then
+        error "CONTROL_PLANE_ID not set (Control Plane UUID from Konnect)"
+        missing=true
+    fi
+
+    if [[ "$missing" == true ]]; then
+        echo ""
+        echo "Usage:"
+        echo "  export KONNECT_REGION=\"au\""
+        echo "  export KONNECT_TOKEN=\"kpat_xxx...\""
+        echo "  export CONTROL_PLANE_ID=\"your-cp-id-here\""
+        echo "  ./scripts/setup-konnect.sh"
+        exit 1
+    fi
+}
+
+# ---------------------------------------------------------------------------
+# Generate self-signed mTLS certificate
+# ---------------------------------------------------------------------------
+generate_cert() {
+    log "Generating self-signed mTLS certificate..."
+
+    openssl req -new -x509 -nodes -newkey rsa:2048 \
+        -subj "/CN=kongdp/C=US" \
+        -keyout ./tls.key -out ./tls.crt -days 365 2>/dev/null
+
+    log "  Certificate: ./tls.crt"
+    log "  Private key: ./tls.key"
+}
+
+# ---------------------------------------------------------------------------
+# Register certificate with Konnect via API
+# ---------------------------------------------------------------------------
+register_cert() {
+    log "Registering certificate with Konnect (${KONNECT_REGION} region)..."
+
+    CERT=$(awk 'NF {sub(/\r/, ""); printf "%s\\n",$0;}' tls.crt)
+
+    HTTP_CODE=$(curl -s -o /tmp/konnect-response.json -w "%{http_code}" \
+        -X POST "https://${KONNECT_REGION}.api.konghq.com/v2/control-planes/${CONTROL_PLANE_ID}/dp-client-certificates" \
+        -H "Authorization: Bearer $KONNECT_TOKEN" \
+        -H "Content-Type: application/json" \
+        --data "{\"cert\": \"$CERT\"}")
+
+    if [[ "$HTTP_CODE" -ge 200 && "$HTTP_CODE" -lt 300 ]]; then
+        log "  Certificate registered successfully (HTTP $HTTP_CODE)"
+    else
+        error "  Failed to register certificate (HTTP $HTTP_CODE)"
+        error "  Response: $(cat /tmp/konnect-response.json)"
+        exit 1
+    fi
+}
+
+# ---------------------------------------------------------------------------
+# Create K8s secret
+# ---------------------------------------------------------------------------
+create_secret() {
+    log "Creating kong namespace and kong-cluster-cert secret..."
+
+    kubectl create namespace kong --dry-run=client -o yaml | kubectl apply -f -
+
+    kubectl create secret tls kong-cluster-cert -n kong \
+        --cert=./tls.crt --key=./tls.key \
+        --dry-run=client -o yaml | kubectl apply -f -
+
+    log "  Secret kong-cluster-cert created in kong namespace"
+}
+
+# ---------------------------------------------------------------------------
+# Print next steps
+# ---------------------------------------------------------------------------
+show_next_steps() {
     echo ""
-    echo "Please download certificates from Kong Konnect:"
-    echo "1. Log in to https://cloud.konghq.com"
-    echo "2. Go to Gateway Manager → Your Control Plane"
-    echo "3. Click 'Data Plane Nodes' → 'New Data Plane Node'"
-    echo "4. Download and save certificates to: ${CERTS_DIR}/"
-    echo "   - tls.crt"
-    echo "   - tls.key"
-    echo "   - ca.crt"
+    echo "=========================================="
+    echo "  Konnect Integration Setup Complete"
+    echo "=========================================="
     echo ""
-    exit 1
-fi
+    echo "Control Plane ID: ${CONTROL_PLANE_ID}"
+    echo "Region:           ${KONNECT_REGION}"
+    echo ""
+    echo "Update the following files with your endpoints:"
+    echo ""
+    echo "1. argocd/apps/02b-kong-controller.yaml (KIC → Konnect config sync):"
+    echo "   konnect:"
+    echo "     runtimeGroupID: \"${CONTROL_PLANE_ID}\""
+    echo "     apiHostname: \"${KONNECT_REGION}.kic.api.konghq.com\""
+    echo "     tlsClientCertSecretName: \"kong-cluster-cert\""
+    echo ""
+    echo "2. argocd/apps/02-kong-gateway.yaml (Data Plane → Konnect telemetry):"
+    echo "   env:"
+    echo "     cluster_control_plane: \"${CONTROL_PLANE_ID}.${KONNECT_REGION}.cp0.konghq.com:443\""
+    echo "     cluster_server_name: \"${CONTROL_PLANE_ID}.${KONNECT_REGION}.cp0.konghq.com\""
+    echo "     cluster_telemetry_endpoint: \"${CONTROL_PLANE_ID}.${KONNECT_REGION}.tp0.konghq.com:443\""
+    echo "     cluster_telemetry_server_name: \"${CONTROL_PLANE_ID}.${KONNECT_REGION}.tp0.konghq.com\""
+    echo ""
+    echo "3. Deploy via ArgoCD:"
+    echo "   kubectl apply -f argocd/apps/root-app.yaml"
+    echo ""
+    echo "4. Verify in Konnect dashboard:"
+    echo "   https://cloud.konghq.com → Gateway Manager → Data Plane Nodes"
+    echo ""
+    echo "Cleanup: rm -f ./tls.crt ./tls.key"
+    echo ""
+}
 
-echo "Found certificates in: ${CERTS_DIR}"
-echo ""
+# ---------------------------------------------------------------------------
+# Main
+# ---------------------------------------------------------------------------
+main() {
+    echo ""
+    echo "=========================================="
+    echo "  Kong Konnect Integration Setup"
+    echo "=========================================="
+    echo ""
 
-# Create kong namespace if not exists
-echo "Creating kong namespace..."
-kubectl create namespace kong --dry-run=client -o yaml | kubectl apply -f -
+    validate_env
+    generate_cert
+    register_cert
+    create_secret
+    show_next_steps
+}
 
-# Create TLS secret for Konnect connection
-echo "Creating konnect-client-tls secret..."
-kubectl create secret tls konnect-client-tls -n kong \
-    --cert="${CERTS_DIR}/tls.crt" \
-    --key="${CERTS_DIR}/tls.key" \
-    --dry-run=client -o yaml | kubectl apply -f -
-
-# Create cluster certificate secret
-echo "Creating konnect-cluster-cert secret..."
-kubectl create secret generic konnect-cluster-cert -n kong \
-    --from-file=ca.crt="${CERTS_DIR}/ca.crt" \
-    --dry-run=client -o yaml | kubectl apply -f -
-
-echo ""
-echo "=== Secrets Created Successfully ==="
-echo ""
-echo "Next steps:"
-echo ""
-echo "1. Update k8s/kong/konnect-values.yaml with your Control Plane endpoints:"
-echo "   - cluster_control_plane: <your-cp>.us.cp0.konghq.com:443"
-echo "   - cluster_server_name: <your-cp>.us.cp0.konghq.com"
-echo "   - cluster_telemetry_endpoint: <your-cp>.us.tp0.konghq.com:443"
-echo "   - cluster_telemetry_server_name: <your-cp>.us.tp0.konghq.com"
-echo ""
-echo "2. Deploy Kong Gateway using ArgoCD:"
-echo "   kubectl apply -f argocd/apps/root-app.yaml"
-echo ""
-echo "3. Verify Konnect connection in the dashboard:"
-echo "   https://cloud.konghq.com → Gateway Manager → Your Control Plane"
-echo ""
+main "$@"
