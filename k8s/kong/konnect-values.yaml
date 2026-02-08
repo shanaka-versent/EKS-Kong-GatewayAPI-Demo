@@ -2,59 +2,39 @@
 # @author Shanaka Jayasundera - shanakaj@gmail.com
 #
 # SPLIT DEPLOYMENT: Kong Gateway (data plane) and KIC (controller) are deployed
-# as separate Helm releases, each with its own Konnect connection.
+# as separate Helm releases. Only KIC connects to Konnect.
 #
 # These values are for reference only — the actual config is inline in:
-#   - argocd/apps/02-kong-gateway.yaml    (data plane + telemetry)
+#   - argocd/apps/02-kong-gateway.yaml    (data plane — no Konnect config)
 #   - argocd/apps/02b-kong-controller.yaml (KIC + Konnect config sync)
 #
-# Both components share the same mTLS secret (kong-cluster-cert) for
-# authenticating to Konnect. The secret is created manually before ArgoCD
-# deployment — see README Step 4b.
+# IMPORTANT: For KIC-type control planes (CLUSTER_TYPE_K8S_INGRESS_CONTROLLER),
+# KIC handles ALL Konnect communication — config sync, node registration, and
+# telemetry. The data plane does NOT connect to Konnect directly.
+#
+# Do NOT configure konnect_mode, cluster_telemetry_endpoint, cluster_control_plane,
+# or role=data_plane on the data plane. These cause:
+#   - 401 errors on telemetry (tp0.konghq.com rejects data plane certs for KIC CPs)
+#   - role=data_plane disables admin API, breaking KIC gateway discovery
 
 # ==============================================================================
 # DATA PLANE VALUES (argocd/apps/02-kong-gateway.yaml)
 # ==============================================================================
 # The data plane handles traffic proxying, TLS termination, and plugin execution.
-# It connects to Konnect directly for:
-#   - Control plane heartbeat (cluster_control_plane → cp0.konghq.com)
-#   - Traffic telemetry/analytics (cluster_telemetry_endpoint → tp0.konghq.com)
-#
-# Without the telemetry endpoint, Konnect Analytics will show 0 requests.
+# It receives config from KIC via admin API — no direct Konnect connection.
 
 image:
-  repository: kong/kong-gateway   # Enterprise image (license managed by Konnect)
+  repository: kong/kong-gateway   # Enterprise image (license managed by Konnect via KIC)
   tag: "3.9"
 
 ingressController:
   enabled: false  # KIC is deployed as a separate Helm release
 
 env:
-  # Konnect mode and data plane identity
-  konnect_mode: "on"
-  role: data_plane
-  database: "off"             # DB-less — KIC pushes config via admin API
-  vitals: "off"               # Vitals replaced by Konnect Analytics
-  cluster_mtls: pki           # mTLS auth mode for Konnect
+  database: "off"   # DB-less — KIC pushes config via admin API
+  # No Konnect env vars — KIC handles all Konnect communication
 
-  # Control plane connection (heartbeat + status reporting)
-  cluster_control_plane: "<CP-ID>.<REGION>.cp0.konghq.com:443"
-  cluster_server_name: "<CP-ID>.<REGION>.cp0.konghq.com"
-
-  # Telemetry endpoint (traffic analytics — required for Konnect dashboard)
-  cluster_telemetry_endpoint: "<CP-ID>.<REGION>.tp0.konghq.com:443"
-  cluster_telemetry_server_name: "<CP-ID>.<REGION>.tp0.konghq.com"
-
-  # mTLS certificate paths (mounted from kong-cluster-cert secret)
-  cluster_cert: /etc/secrets/kong-cluster-cert/tls.crt
-  cluster_cert_key: /etc/secrets/kong-cluster-cert/tls.key
-  lua_ssl_trusted_certificate: system   # Trust system CA bundle for Konnect TLS
-
-# Mount the mTLS certificate secret
-secretVolumes:
-  - kong-cluster-cert
-
-# Admin API — enabled for KIC gateway discovery (ClusterIP only, not exposed externally)
+# Admin API — must stay enabled for KIC gateway discovery (ClusterIP only)
 admin:
   enabled: true
   type: ClusterIP
@@ -77,7 +57,16 @@ proxy:
     containerPort: 8443
     servicePort: 443
 
-# Status endpoint (health checks)
+# Readiness probe: use /status instead of /status/ready
+# DB-less Kong without initial config returns 503 on /status/ready,
+# preventing KIC from discovering pods via admin API.
+readinessProbe:
+  httpGet:
+    path: /status
+    port: status
+    scheme: HTTP
+
+# Status endpoint (health checks — NLB health check target)
 status:
   enabled: true
   http:
@@ -109,9 +98,11 @@ replicaCount: 2
 # The KIC controller watches K8s Gateway API CRDs (Gateway, HTTPRoute, etc.)
 # and KongPlugin/KongConsumer CRDs, then:
 #   1. Pushes config to Kong data plane via admin API (gatewayDiscovery)
-#   2. Syncs config to Konnect for visibility (routes, plugins, consumers)
+#   2. Syncs config to Konnect (routes, plugins, consumers, node registration)
+#   3. Reports analytics/telemetry to Konnect
+#   4. Fetches Enterprise license from Konnect
 #
-# KIC does NOT relay traffic metrics — that's the data plane's job.
+# KIC is the ONLY component that connects to Konnect for KIC-type CPs.
 
 # ingressController:
 #   enabled: true
@@ -119,9 +110,9 @@ replicaCount: 2
 #     enabled: true
 #     runtimeGroupID: "<CP-ID>"                    # Control Plane ID (UUID)
 #     apiHostname: "<REGION>.kic.api.konghq.com"   # KIC API endpoint
-#     tlsClientCertSecretName: "kong-cluster-cert"  # Same mTLS secret as data plane
+#     tlsClientCertSecretName: "kong-cluster-cert"  # mTLS cert for Konnect auth
 #     license:
-#       enabled: true
+#       enabled: true                               # Auto-fetch Enterprise license
 #   gatewayDiscovery:
 #     enabled: true
 #     adminApiService:

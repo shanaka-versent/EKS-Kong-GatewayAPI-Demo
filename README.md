@@ -787,11 +787,8 @@ kubectl get gatewayclasses,gateways,httproutes -A
 kubectl get certificate -n kong
 kubectl describe certificate kong-gateway-tls -n kong
 
-# Verify Konnect — KIC config sync
-kubectl logs -n kong -l app.kubernetes.io/instance=kong-controller --tail=10 | grep "Konnect"
-
-# Verify Konnect — Data plane telemetry connection
-kubectl logs -n kong -l app.kubernetes.io/instance=kong-gateway --tail=20 | grep -i "telemetry\|konnect\|cluster"
+# Verify Konnect — KIC config sync and node registration
+kubectl logs -n kong -l app.kubernetes.io/instance=kong-controller --tail=20 | grep -i "konnect\|Successfully synced"
 ```
 
 #### Test All Routes
@@ -1417,27 +1414,14 @@ values: |
   ingressController:
     enabled: false    # KIC is a separate Helm release
 
-  # Konnect telemetry: data plane sends traffic analytics directly to Konnect
-  # Without these, Konnect Analytics dashboard will show 0 requests
+  # DB-less mode — KIC pushes config via admin API
+  # No Konnect env vars on data plane: for KIC-type control planes,
+  # KIC handles ALL Konnect communication (config sync + telemetry)
   env:
-    konnect_mode: "on"
-    vitals: "off"
-    cluster_mtls: pki
-    cluster_control_plane: "<CP-ID>.<REGION>.cp0.konghq.com:443"
-    cluster_server_name: "<CP-ID>.<REGION>.cp0.konghq.com"
-    cluster_telemetry_endpoint: "<CP-ID>.<REGION>.tp0.konghq.com:443"
-    cluster_telemetry_server_name: "<CP-ID>.<REGION>.tp0.konghq.com"
-    cluster_cert: /etc/secrets/kong-cluster-cert/tls.crt
-    cluster_cert_key: /etc/secrets/kong-cluster-cert/tls.key
-    lua_ssl_trusted_certificate: system
-    role: data_plane
     database: "off"
 
-  secretVolumes:
-    - kong-cluster-cert
-
   admin:
-    enabled: true     # KIC connects via admin API (must stay enabled with role: data_plane)
+    enabled: true     # KIC connects via admin API for gateway discovery
     type: ClusterIP
     http:
       enabled: true
@@ -1535,7 +1519,8 @@ kubectl get ingress -A   # Should return "No resources found"
 |-------|-------|-----|
 | `403: non-KIC cluster` | CP created as `CLUSTER_TYPE_CONTROL_PLANE` | Delete CP and recreate with `CLUSTER_TYPE_K8S_INGRESS_CONTROLLER` (type is immutable) |
 | `401: not authorized` | Certificate not registered with the CP, or wrong CP ID | Re-register cert via Step 3, or verify `runtimeGroupID` matches CP ID from Step 1 |
-| `role: data_plane` + admin API | `role: data_plane` is needed for Konnect telemetry; explicit `admin.enabled: true` keeps admin API alive | Ensure `admin.enabled: true` is set alongside `role: data_plane` — KIC needs the admin API for gateway discovery |
+| `role: data_plane` disables admin API | `role: data_plane` causes Kong to ignore `admin.enabled: true` — admin API stops listening on :8001/:8444 | Do NOT set `role: data_plane` on the data plane when using KIC split deployment. For KIC-type CPs, data plane does not need any Konnect env vars |
+| 401 on telemetry endpoint | Data plane connecting to `tp0.konghq.com` directly — not supported for KIC-type control planes | Remove `cluster_telemetry_endpoint`, `konnect_mode`, and all `cluster_*` env vars from data plane. KIC handles all Konnect communication |
 | KIC CrashLoopBackOff on `:8444` | Data plane pods not Ready, admin API not in endpoints | Override readiness probe to `/status` instead of `/status/ready` |
 | `controlPlaneID` not recognized | Helm chart uses a different parameter name | Change to `runtimeGroupID` in Helm values |
 | `gatewayDiscovery` not found | Must be nested under `ingressController`, not at top level | Indent correctly under `ingressController:` |
