@@ -126,8 +126,10 @@ module "route53" {
   count  = var.enable_cloudfront ? 1 : 0
   source = "./modules/route53"
 
-  domain_name = var.domain_name
-  tags        = var.tags
+  domain_name  = var.domain_name
+  nlb_dns_name = module.nlb[0].nlb_dns_name
+  nlb_zone_id  = module.nlb[0].nlb_zone_id
+  tags         = var.tags
 }
 
 # cert-manager IRSA role for Route53 DNS-01 challenge (Let's Encrypt)
@@ -168,9 +170,10 @@ module "cloudfront" {
     aws.us_east_1 = aws.us_east_1
   }
 
-  name_prefix  = local.name_prefix
-  nlb_arn      = module.nlb[0].nlb_arn
-  nlb_dns_name = module.nlb[0].nlb_dns_name
+  name_prefix       = local.name_prefix
+  nlb_arn           = module.nlb[0].nlb_arn
+  nlb_dns_name      = module.nlb[0].nlb_dns_name
+  origin_domain_name = var.domain_name # SNI must match the Let's Encrypt cert CN
 
   # WAF Configuration
   enable_waf           = var.enable_waf

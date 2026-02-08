@@ -17,6 +17,12 @@ variable "nlb_dns_name" {
   type        = string
 }
 
+variable "origin_domain_name" {
+  description = "Domain name for CloudFront origin SNI (must match the TLS certificate on the origin). Falls back to nlb_dns_name if empty."
+  type        = string
+  default     = ""
+}
+
 # S3 Origin Configuration (optional)
 variable "enable_s3_origin" {
   description = "Enable S3 origin for static assets"

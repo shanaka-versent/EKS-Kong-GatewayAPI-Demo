@@ -305,9 +305,11 @@ resource "aws_cloudfront_distribution" "main" {
 
   # ---------------------------------------------------------------------------
   # VPC Origin - Kong Gateway via Internal NLB (private connectivity)
+  # For HTTPS origins, domain_name controls the SNI sent during TLS handshake.
+  # The certificate on the origin (Kong) must have a CN/SAN matching this domain.
   # ---------------------------------------------------------------------------
   origin {
-    domain_name = var.nlb_dns_name
+    domain_name = var.origin_domain_name != "" ? var.origin_domain_name : var.nlb_dns_name
     origin_id   = "VPCOrigin-Kong"
 
     vpc_origin_config {

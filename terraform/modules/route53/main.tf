@@ -28,3 +28,19 @@ resource "aws_route53_zone" "main" {
     Module = "route53"
   })
 }
+
+# ALIAS A record at zone apex pointing to Internal NLB
+# This allows CloudFront to use kong.esharps.co.nz as the origin domain_name
+# for correct TLS SNI matching with the Let's Encrypt certificate
+resource "aws_route53_record" "nlb_alias" {
+  count   = var.nlb_dns_name != "" ? 1 : 0
+  zone_id = aws_route53_zone.main.zone_id
+  name    = var.domain_name
+  type    = "A"
+
+  alias {
+    name                   = var.nlb_dns_name
+    zone_id                = var.nlb_zone_id
+    evaluate_target_health = true
+  }
+}
