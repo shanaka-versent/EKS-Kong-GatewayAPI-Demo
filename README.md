@@ -291,13 +291,6 @@ flowchart TB
     KIC -.->|"config sync +<br/>telemetry (mTLS)"| ConfigSync
     KIC -.->|"node registration<br/>+ analytics"| Analytics
 
-    style EKS fill:#f0f0f0
-    style KongNS fill:#ffffff
-    style CertNS fill:#ffffff
-    style API fill:#ffffff
-    style TA1 fill:#ffffff
-    style TA2 fill:#ffffff
-    style GH fill:#ffffff
 ```
 
 **Traffic Flow (End-to-End Encryption):**
@@ -917,12 +910,6 @@ flowchart TB
 
     Konnect -->|"Config Sync +<br/>Telemetry (mTLS)"| DataPlanes
 
-    style Konnect fill:#e8e8e8,stroke:#999,color:#333
-    style Core fill:#d9d9d9,stroke:#888,color:#333
-    style Advanced fill:#d9d9d9,stroke:#888,color:#333
-    style MgmtTools fill:#d9d9d9,stroke:#888,color:#333
-    style DataPlanes fill:#f0f0f0,stroke:#999,color:#333
-    style SelfHosted fill:#c8c8c8,stroke:#666,color:#333
 ```
 
 | Capability | Description |
@@ -982,11 +969,6 @@ flowchart TB
     KICBox -.->|"mTLS<br/>(kong-cluster-cert)"| Konnect
     DPBox ~~~ NoConn["No direct Konnect<br/>connection"]
 
-    style EKS fill:#f0f0f0,stroke:#999
-    style KICBox fill:#e0e0e0,stroke:#888
-    style DPBox fill:#e0e0e0,stroke:#888
-    style Konnect fill:#e8e8e8,stroke:#999
-    style NoConn fill:#fff,stroke:#ccc,stroke-dasharray: 5 5,color:#999
 ```
 
 **KIC-type Control Plane — key architectural constraint:**
