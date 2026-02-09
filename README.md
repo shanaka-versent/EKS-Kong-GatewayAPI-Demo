@@ -289,7 +289,7 @@ flowchart TB
     HealthRoute --> HealthPod
 
     KIC -.->|"config sync +<br/>node registration (mTLS)"| ConfigSync
-    KIC -.->|"license fetch"| Analytics
+    KIC -.->|"license fetch"| License
 
 ```
 
@@ -764,7 +764,7 @@ Only the KIC controller connects to Konnect. For KIC-type control planes (`CLUST
 
 | Endpoint | Used By | Purpose |
 |----------|---------|---------|
-| `<REGION>.kic.api.konghq.com` | KIC Controller | Config sync, node registration, telemetry |
+| `<REGION>.kic.api.konghq.com` | KIC Controller | Config sync, node registration, license fetch |
 
 **Region codes:** `us`, `eu`, `au`, `me`, `in`, `sg`
 
@@ -974,7 +974,7 @@ flowchart TB
 
 **KIC-type Control Plane — key architectural constraint:**
 
-For control planes created with `CLUSTER_TYPE_K8S_INGRESS_CONTROLLER`, KIC is the **sole connection to Konnect**. The data plane does NOT connect to Konnect directly — all config sync, node registration, and telemetry flow through KIC via `<region>.kic.api.konghq.com`.
+For control planes created with `CLUSTER_TYPE_K8S_INGRESS_CONTROLLER`, KIC is the **sole connection to Konnect**. The data plane does NOT connect to Konnect directly — all config sync, node registration, and license fetch flow through KIC via `<region>.kic.api.konghq.com`.
 
 | Component | Konnect Connection | What It Does |
 |-----------|-------------------|--------------|
