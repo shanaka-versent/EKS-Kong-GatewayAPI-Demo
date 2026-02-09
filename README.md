@@ -909,9 +909,11 @@ flowchart TB
         SelfHosted["Self-Hosted<br/>(K8s / VMs)<br/>— This Demo"]
     end
 
-    Konnect -->|"Config Sync +<br/>Telemetry (mTLS)"| DataPlanes
+    Konnect -->|"Config Sync +<br/>Telemetry* (mTLS)"| DataPlanes
 
 ```
+
+> *\*Telemetry: available for Dedicated Cloud Gateways and standard `role: data_plane` deployments. Not available with KIC + Gateway Discovery (this demo) — see [Known Limitations](#known-limitations).*
 
 | Capability | Description |
 |------------|-------------|
