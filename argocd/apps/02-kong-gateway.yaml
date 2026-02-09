@@ -37,31 +37,23 @@ spec:
         ingressController:
           enabled: false
 
-        # DB-less data plane — KIC pushes config via admin API
+        # DB-less mode — KIC pushes config via admin API
         # Telemetry: data plane sends traffic analytics directly to Konnect
         # KIC handles config sync + node registration, but NOT traffic metrics.
         #
-        # role=data_plane is REQUIRED to activate the telemetry subsystem.
-        # Without it, cluster_telemetry_endpoint is ignored and Konnect gets no analytics.
-        # admin_listen is explicitly set to keep admin API alive for KIC gateway discovery
-        # (role=data_plane normally disables it).
-        # konnect_mode=on enables Konnect-specific hybrid mode features.
+        # IMPORTANT: role=data_plane CANNOT be used here because it forcefully
+        # disables admin API (admin_listen override does NOT work).
+        # KIC needs admin API for gateway discovery + config push.
+        # Telemetry config is set WITHOUT role=data_plane — using correct
+        # Konnect endpoints from API (702eee73f2 prefix).
         env:
-          role: data_plane
           database: "off"
-          konnect_mode: "on"
-          vitals: "off"
           cluster_mtls: pki
-          cluster_control_plane: "702eee73f2.au.cp0.konghq.com:443"
-          cluster_server_name: "702eee73f2.au.cp0.konghq.com"
           cluster_telemetry_endpoint: "702eee73f2.au.tp0.konghq.com:443"
           cluster_telemetry_server_name: "702eee73f2.au.tp0.konghq.com"
           cluster_cert: /etc/secrets/kong-cluster-cert/tls.crt
           cluster_cert_key: /etc/secrets/kong-cluster-cert/tls.key
           lua_ssl_trusted_certificate: system
-          # Explicitly keep admin API alive (role=data_plane normally disables it)
-          # KIC needs admin API on 8001/8444 for gateway discovery + config push
-          admin_listen: "0.0.0.0:8001 reuseport backlog=16384, 0.0.0.0:8444 http2 ssl reuseport backlog=16384"
 
         # Mount Konnect mTLS certificate for telemetry authentication
         secretVolumes:
